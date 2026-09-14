@@ -372,7 +372,7 @@ markout of the average maker, every print, 5 days, 135711 prints
   60 s            -0.0090      -0.0286
   300 s           +0.0301      -0.1433
 
-== 5. robustness: every (gamma, requote) pair on the holdout ==
+== 5. agent sensitivity: every (gamma, requote) pair on the holdout ==
 /home/ubuntu/latencytax/scripts/analyse.py:61: RuntimeWarning: invalid value encountered in divide
   r = num[idx].sum(axis=1) / den[idx].sum(axis=1)
 --- gamma=0 requote=0 ---

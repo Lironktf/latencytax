@@ -323,21 +323,16 @@ Reject OrderBook::modify(Ts ts, OrderId id, Tick new_tick, Qty new_qty) {
   const Side side = o.side;
   const Tick old_tick = o.tick;
   const Qty old_qty = o.qty;
+  (void)old_tick;
+  (void)old_qty;
   remove_resting(s, CancelReason::Replace, ts);
   const Reject r = add_limit(ts, id, side, new_tick, new_qty, Tif::Gtc);
-  if (r != Reject::None) {
-    // Put the original order back so a rejected modify is not a silent cancel.
-    const Slot again = alloc_slot();
-    if (again != kNullSlot) {
-      Order& ro = pool_[again];
-      ro.id = id;
-      ro.qty = old_qty;
-      ro.tick = old_tick;
-      ro.side = side;
-      ids_.insert(id, again);
-      rest(ts, again);
-    }
-  }
+  // Every reason add_limit could reject has already been ruled out above: the
+  // price and size were validated before the order was pulled, the id was just
+  // erased so it cannot be a duplicate, and removing the order returned a slot
+  // to the free list so the pool cannot be exhausted. A modify therefore never
+  // turns into a silent cancel.
+  assert(r == Reject::None);
   return r;
 }
 

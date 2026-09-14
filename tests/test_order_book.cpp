@@ -256,6 +256,68 @@ void test_modify_keeps_priority_only_on_size_down() {
   CHECK(b.check_invariants());
 }
 
+// A modify that cannot be honoured must not become a cancel. Every reject is
+// decided before the resting order is touched.
+void test_rejected_modify_leaves_the_order_alone() {
+  Recorder r;
+  BookConfig c = small_cfg();
+  OrderBook b(c, &r);
+  b.add_limit(1, 1, Side::Buy, 100, Q(4));
+  b.add_limit(2, 2, Side::Buy, 100, Q(6));
+  r.clear();
+
+  CHECK_EQ(static_cast<int>(b.modify(3, 1, c.max_tick + 1, Q(4))),
+           static_cast<int>(Reject::PriceOutOfRange));
+  CHECK_EQ(static_cast<int>(b.modify(4, 1, 0, Q(4))),
+           static_cast<int>(Reject::PriceOutOfRange));
+  CHECK_EQ(static_cast<int>(b.modify(5, 1, 100, 0)), static_cast<int>(Reject::BadQty));
+  CHECK_EQ(static_cast<int>(b.modify(6, 1, 100, -1)), static_cast<int>(Reject::BadQty));
+
+  // Untouched: same price, same size, same place in the queue.
+  CHECK(b.is_live(1));
+  CHECK_EQ(b.order_tick(1), Tick(100));
+  CHECK_EQ(b.order_qty(1), Q(4));
+  CHECK_EQ(b.queue_ahead(1), Qty(0));
+  CHECK_EQ(b.queue_ahead(2), Q(4));
+  CHECK_EQ(b.qty_at(100), Q(10));
+  CHECK_EQ(b.orders_at(100), 2u);
+  CHECK_EQ(b.live_orders(), size_t(2));
+  CHECK_EQ(r.cancels.size(), size_t(0));
+  CHECK_EQ(r.rejects.size(), size_t(4));
+  CHECK(b.check_invariants());
+}
+
+// An order pool with nothing left rejects the add rather than half applying it.
+void test_pool_exhaustion() {
+  Recorder r;
+  BookConfig c = small_cfg();
+  c.max_orders = 4;
+  OrderBook b(c, &r);
+  for (int i = 0; i < 4; ++i) {
+    CHECK_EQ(static_cast<int>(b.add_limit(1, 100 + i, Side::Buy, 50, Q(1))),
+             static_cast<int>(Reject::None));
+  }
+  CHECK_EQ(static_cast<int>(b.add_limit(2, 200, Side::Buy, 50, Q(1))),
+           static_cast<int>(Reject::PoolExhausted));
+  CHECK_EQ(b.live_orders(), size_t(4));
+  CHECK_EQ(b.qty_at(50), Q(4));
+  // A full pool still lets liquidity be taken, because that frees slots.
+  b.add_limit(3, 300, Side::Sell, 50, Q(4), Tif::Ioc);
+  CHECK_EQ(b.live_orders(), size_t(0));
+  CHECK_EQ(static_cast<int>(b.add_limit(4, 400, Side::Buy, 50, Q(1))),
+           static_cast<int>(Reject::None));
+  // A modify across prices works on a full pool, because the order it pulls
+  // hands its slot back before the replacement asks for one.
+  for (int i = 0; i < 3; ++i) b.add_limit(5, 500 + i, Side::Buy, 50, Q(1));
+  CHECK_EQ(b.live_orders(), size_t(4));
+  CHECK_EQ(static_cast<int>(b.modify(6, 400, 49, Q(2))), static_cast<int>(Reject::None));
+  CHECK(b.is_live(400));
+  CHECK_EQ(b.order_tick(400), Tick(49));
+  CHECK_EQ(b.order_qty(400), Q(2));
+  CHECK_EQ(b.live_orders(), size_t(4));
+  CHECK(b.check_invariants());
+}
+
 void test_modify_can_cross() {
   Recorder r;
   OrderBook b(small_cfg(), &r);
@@ -456,9 +518,19 @@ void test_differential_fuzz() {
         const std::size_t i = rng() % live.size();
         const OrderId id = live[i];
         const Tick t = fast.order_tick(id);
+        if (t == kInvalidTick) {
+          // Already filled. Modifying it is still worth sending, since both
+          // books have to reject it the same way, but the new price has to come
+          // from somewhere real.
+          fast.modify(ts, id, mid, 1000);
+          ref.modify(ts, id, mid, 1000);
+          live[i] = live.back();
+          live.pop_back();
+          continue;
+        }
         const Qty q = fast.order_qty(id);
         const bool reprice = (rng() % 3) == 0;
-        const Tick nt = reprice ? static_cast<Tick>(t + (int)(rng() % 7) - 3) : t;
+        const Tick nt = reprice ? static_cast<Tick>(t + static_cast<int>(rng() % 7) - 3) : t;
         const Qty nq = (rng() % 2) ? q / 2 + 1 : q * 2;
         fast.modify(ts, id, nt, nq);
         ref.modify(ts, id, nt, nq);
@@ -525,6 +597,8 @@ int main() {
   RUN(test_duplicate_id_rejected);
   RUN(test_modify_keeps_priority_only_on_size_down);
   RUN(test_modify_can_cross);
+  RUN(test_rejected_modify_leaves_the_order_alone);
+  RUN(test_pool_exhaustion);
   RUN(test_out_of_range_price);
   RUN(test_sweep_many_levels);
   RUN(test_differential_fuzz);

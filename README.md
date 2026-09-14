@@ -15,13 +15,14 @@ unexpected trades. The reconstruction that drives the engine is computed from th
 raw files alone and never reads engine state, so this is a check on the engine
 rather than a tautology.
 
-**The engine's speed depends on the book, and the numbers say by how much.** With
-a book of 2,000 resting orders it runs at 17.13 million messages per
-second with a median operation of 46 nanoseconds. With 200,000 resting orders
-the same code runs at 4.05 million messages per second with a median of
-205 nanoseconds. Nothing about the algorithm changed
-between those two rows; the working set went from fitting in cache to not
-fitting.
+**The engine's speed depends on the size of the book, and the numbers say by how
+much.** With 2,000 resting orders it runs at 17.13 million messages per second
+with a median operation of 46 ns and a p99.9 of 495 ns. With 200,000 resting
+orders the same code runs at 4.05 million messages per second with a median of
+205 ns and a p99.9 of 15.7 us. Nothing about the algorithm changed between those
+two rows. The working set went from fitting in cache to not fitting, and a cancel
+went from costing the same as an add to costing 1.6 times as much, because a
+cancel begins with a hash lookup that has become a guaranteed miss.
 
 **Reaction latency below about 33 milliseconds is worth exactly nothing on this
 venue, and that is measurable rather than a manner of speaking.** The latency tax
@@ -131,7 +132,9 @@ place where that limit changes what a number means, it is said again.
 
 ## The matching engine
 
-`src/engine/`, about 700 lines.
+`src/engine/`, about 1,000 lines including comments. The whole repository is
+about 5,000 lines of C++ with no dependency outside the standard library and
+zlib.
 
 Price levels live in one contiguous array indexed directly by tick. A level is 24
 bytes: resting quantity, order count, and the head and tail of its FIFO queue.
@@ -159,9 +162,10 @@ Limit, market, cancel and modify, with price-time priority, and immediate-or-can
 and fill-or-kill alongside good-till-cancel. Modify keeps queue position only
 when the price is unchanged and the size goes down, which is the only case where
 a venue can honestly leave an order where it is; anything else is a cancel and a
-new order at the back of the queue. A rejected message leaves the book exactly as
-it was, including a modify whose replacement leg fails, which puts the original
-order back rather than silently cancelling it.
+new order at the back of the queue. Every reject is decided before anything is
+removed, so a rejected message leaves the book exactly as it was and a modify
+never degrades into a silent cancel. That includes the awkward case of a full
+order pool, which is checked before matching starts rather than after.
 
 Events go out through an `EventSink` interface: one virtual call per event, not
 per operation. The benchmark numbers below include that cost, because a real
@@ -294,9 +298,20 @@ For each window between consecutive snapshots:
 
 Both steps work on a shadow model built only from the raw files. The shadow model
 never reads engine state. The engine is then required to agree with the next
-snapshot exactly, so a bookkeeping error anywhere in the level array, the FIFO
-queues, the occupancy bitmap or the id map shows up as a mismatch rather than
-being quietly corrected. That is what makes this a test and not a tautology.
+snapshot exactly.
+
+That is what makes this a test rather than a tautology, and the mechanism is
+worth spelling out, because the obvious objection is that a diff computed from
+snapshot n+1 will of course land on snapshot n+1. It will not. The diff is
+computed as the target snapshot minus the *shadow* state, and applied to the
+*engine* state. Those two are only the same thing if the engine is right. If the
+engine had dropped a fill, mislinked a queue, left a stale occupancy bit or
+returned the wrong best price, the diff would be applied to a book it does not
+describe and the engine would land somewhere other than the published snapshot.
+
+The book is seeded from a snapshot once per day and after a feed gap, and never
+reseeded otherwise, so an error in the first window of a day stays wrong for the
+remaining 17,000 windows of that day instead of being washed out.
 
 Since the feed is L2 and individual orders are not observable, each price level
 is represented by one synthetic order holding the whole level quantity. Level
@@ -334,9 +349,11 @@ seconds: most of the change is quotes being pulled and replaced, not volume. It
 is a measurement of the data's resolution, not a defect. The reconstructed row is
 the engine check and it has to be zero.
 
-The last three rows are a staleness measurement. 14.2% of traded volume printed
-at a price where the five second old snapshot showed nothing resting, which is a
-direct reading of how much the book moves between snapshots.
+The last three rows measure how stale a five second old book is. 14.2% of traded
+volume had no resting size to match against at or better than its printed price,
+and 12.5% of prints found nothing resting at all. That is a direct reading of how
+far the book moves between snapshots, and it is the reason the market making
+simulation models queue position explicitly instead of reading it off the book.
 
 Whole run: 14 seconds for 39 days on one core.
 
@@ -445,12 +462,17 @@ remain do not cover the fee.
 Worth saying plainly, because it frames everything above. All 36 configurations
 in the calibration grid have negative net edge, from -1.94 to -3.34 bps, and the
 primary configuration is still at -1.1403 bps with the maker fee set to zero. So
-it is not a fee problem. The spread is one tick, which at a price near 1916 USD
-is 0.5300 bps at the holdout median mid of 1887.0, so a maker at the touch is
-competing for a half spread of 0.2650 bps against a base tier maker fee of
-1.5 bps. And the touch holds a few hundred ETH,
-so an agent joining it sits at the back and fills mostly when the tape trades
-through, which is the adversely selected subset.
+it is not a fee problem. The spread is one tick, which at the holdout median mid
+of 1887.0 USD is 0.5300 bps, so a maker at the touch is competing for a half
+spread of 0.2650 bps against a base tier maker fee of 1.5 bps. And the touch
+holds a few hundred ETH, so an agent joining it sits at the back and fills mostly
+when the tape trades through its price, which is the adversely selected subset:
+41.0% to 50.1% of this agent's fills, depending on latency. Its 5 second markout
+is -0.4937 bps, against +0.0748 for the average maker on the same five days
+computed straight from all 135,711 prints with no agent and no fill model
+involved. Sitting at the back of the queue is worth about 0.57 bps of markout,
+which is two orders of magnitude more than anything latency does in the
+registered range.
 
 This says that joining the back of a deep one-tick queue is unprofitable on this
 instrument, and that making that decision faster does not help. It says nothing
@@ -499,7 +521,8 @@ src/replay/     raw file parsing, reconstruction, fidelity binary
 src/sim/        fill model, agent, simulation binary
 bench/          engine benchmark
 tests/          four test binaries, run by ctest
-scripts/        run_bench.sh, run_experiment.sh, analyse.py, skew_compare.py
+scripts/        run_bench.sh, run_experiment.sh, analyse.py, skew_compare.py,
+                tape_structure.py
 experiments/    pre-registration, amendments, results
 results/        everything the two scripts produce
 docs/           a longer write up of the latency result

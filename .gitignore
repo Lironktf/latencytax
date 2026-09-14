@@ -1,6 +1,14 @@
+# Builds
 build/
+build-*/
+
+# Raw data. Read only, fetched with the alphadata CLI, never committed.
 data/
-results/*.csv
-results/*.json
+
+# Hourly mark to market files are large and regenerate in two minutes with
+# scripts/run_experiment.sh. Everything else under results/ is committed, since
+# it is the evidence for the numbers in the README.
+results/*_hourly.csv
+
 __pycache__/
 *.o
