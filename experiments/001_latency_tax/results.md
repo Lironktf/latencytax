@@ -176,12 +176,18 @@ interval crosses zero in all of them.
 | extension set, 25 untouched days | -0.000598 | [-0.005000, +0.001453] | 1000 ms |
 
 At kappa 0 and 0.5 the first latency with a statistically significant paired PnL
-difference is 66 ms rather than 2000 ms. That is worth stating plainly: under a
-fill model that gives the agent no credit for cancellations ahead of it in the
-queue, crossing from 33 ms to 66 ms, which is crossing one block boundary, is
-detectable. It is still not evidence of a gradient inside the millisecond range,
-because 0.1, 1, 10 and 33 ms remain identical under every kappa. It is evidence
-that the block boundary is the thing that matters.
+difference is 66 ms rather than 2000 ms. That is worth stating plainly, and then
+qualifying. Under a fill model that gives the agent no credit for cancellations
+ahead of it in the queue, crossing from 33 ms to 66 ms, which is crossing one
+block boundary, is detectable: the paired difference at kappa 0 is -0.224 USD
+with a 95% interval of [-0.417, -0.030]. It is also 22 cents over five days on
+648,921 USD of notional, which is 0.0035 bps. Statistically distinguishable from
+zero and economically nothing.
+
+It is still not evidence of a gradient inside the millisecond range, because
+0.1, 1, 10 and 33 ms remain identical under every kappa. What it is evidence of
+is that the block boundary is the thing that matters, which is the claim being
+made.
 
 Across the nine (gamma, requote) configurations on the holdout, the headline
 slope point estimates run from -0.001495 to +0.000870 bps per ms and every

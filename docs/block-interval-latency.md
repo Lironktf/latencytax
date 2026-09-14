@@ -321,10 +321,13 @@ interval:
 | extension, 25 days | -0.000598 | [-0.005000, +0.001453] |
 
 Under kappa 0 and 0.5 the first latency with a significant paired PnL loss moves
-from 2000 ms to 66 ms. That is not a gradient inside the millisecond range: 0.1,
-1, 10 and 33 ms remain identical under every kappa. It says that crossing one
-block boundary is detectable when the fill model gives the agent no credit for
-queue decay, which is consistent with the mechanism rather than against it.
+from 2000 ms to 66 ms. The effect at 66 ms under kappa 0 is -0.224 USD with a 95%
+interval of [-0.417, -0.030], which is 22 cents over five days on 648,921 USD of
+notional, or 0.0035 basis points: distinguishable from zero and economically
+nothing. It is also not a gradient inside the millisecond range, since 0.1, 1, 10
+and 33 ms remain identical under every kappa. It says that crossing one block
+boundary is detectable when the fill model gives the agent no credit for queue
+decay, which supports the mechanism rather than contradicting it.
 
 ### 5.5 Inventory skew
 
