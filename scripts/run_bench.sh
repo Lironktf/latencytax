@@ -29,9 +29,14 @@ for HP in 0 1; do
   echo
 done
 
-echo "== tick to trade, udp on loopback =="
-./build/ticktotrade --seconds=20 --feed-core="$FEED_CORE" --engine-core="$CORE" \
-  | tee "$OUT/ticktotrade.txt"
+echo "== tick to trade, four transports =="
+./build/ticktotrade --all --seconds=20 --feed-core="$FEED_CORE" --engine-core="$CORE" \
+  --quiet | tee "$OUT/ticktotrade.txt"
+echo
+
+echo "== order entry: soupbintcp sessions carrying ouch, with a forced disconnect =="
+./build/ouchgw --orders=20000 --drop-at=5000 --burst=800 --server-core="$CORE" \
+  --client-core="$FEED_CORE" | tee "$OUT/ouchgw.txt"
 echo
 
 echo "== ml kernels =="

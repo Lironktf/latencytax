@@ -6,8 +6,8 @@ Hyperliquid ETH-perp book from raw snapshots and checks the engine against the
 exchange's own data; and a market making simulation inside that replay that
 measures what reaction latency is worth and what a learned queue model is worth.
 
-About 9,600 lines of C++20, of which 1,900 are tests, with no dependency outside
-the standard library and zlib. Four things came out of it.
+About 12,000 lines of C++20, of which 2,400 are tests, with no dependency outside
+the standard library and zlib. Five things came out of it.
 
 **The engine is correct against 25.6 million level comparisons, twice, by two
 different paths.** Replaying 39 days of ETH-perp, the reconstructed top-20 book
@@ -30,6 +30,16 @@ with 2 MB pages instead of 4 KB takes that from 3.85 to 6.24 million. Nothing ab
 two rows. The working set went from fitting in cache to not fitting, and a cancel
 went from costing slightly less than an add to costing 1.6 times as much, because
 a cancel begins with a hash lookup that has become a guaranteed miss.
+
+**Wire to wire is 11.1 us over UDP on loopback, and the engine is 3.2% of it.**
+Measured over four transports so the shape is visible rather than asserted: UDP
+11,096 ns, connected sockets 10,258, AF_UNIX 5,426, and the lock free ring with
+no kernel in the path 999. That last one is not a bypass NIC, it is the floor one
+is trying to reach, and having it measured is the difference between saying
+kernel bypass is worth an order of magnitude and showing it. The order entry side
+runs SoupBinTCP sessions carrying OUCH into the same engine, and survives having
+its connection killed with 800 acknowledgements outstanding: all 800 replay byte
+for byte on reconnect, 0 missing and 0 altered of 20,800.
 
 **Reaction latency below about 33 milliseconds is worth exactly nothing on this
 venue, and that is measurable rather than a manner of speaking.** The latency tax
@@ -78,7 +88,8 @@ Six binaries, each with `--help`:
 ./build/bench    --kernels --core=2
 ./build/replay   --data=data/raw
 ./build/sim      --data=data/raw --days=2026-08-13 --latency=0.1,1,10,100
-./build/ticktotrade --seconds=20 --feed-core=3 --engine-core=2
+./build/ticktotrade --all --seconds=20
+./build/ouchgw   --orders=20000 --drop-at=5000 --burst=800
 ./build/itchgen  --days=2026-08-13 --out=results/eth.itch
 ./build/itchfeed --check --data=data/raw --days=2026-08-13 results/eth.itch
 ./build/mlgen    --days=2026-08-09 --out=results/queue_train.bin
@@ -428,41 +439,140 @@ Whole run: 14 seconds for 39 days on one core.
 
 `tools/ticktotrade.cpp`.
 
-Everything above measures the engine. That is the part I wrote, and quoting it
-on its own would be misleading, because the number a trading firm actually cares
-about is wire to wire: from a market data packet arriving to the order it
-provoked leaving. This measures that over real UDP sockets on loopback, busy
-polled on both sides, pinned to separate cores, and breaks it into stages so the
-engine's share is visible rather than assumed.
+Everything above measures the engine. That is the part I wrote, and quoting it on
+its own would be misleading, because the number a trading firm cares about is
+wire to wire: a market data packet arrives, and the order it provoked leaves.
+This measures that, breaks it into stages, and runs it over four transports so
+that "kernel bypass would help" stops being a claim and becomes a number.
 
 ```
-./build/ticktotrade --seconds=20 --feed-core=3 --engine-core=2
+./build/ticktotrade --all --seconds=20 --feed-core=3 --engine-core=2
 ```
 
-286,255 round trips, none dropped:
+Medians, nanoseconds:
 
-| stage | p50 | p99 | p99.9 |
-|---|---|---|---|
-| kernel in, `sendto` to `recvfrom` | 6,059 ns | 54,600 ns | 218,442 ns |
-| decode the packet | 69 ns | 414 ns | 1,030 ns |
-| apply to the book | 310 ns | 881 ns | 15,969 ns |
-| look at the book, decide | 9 ns | 28 ns | 101 ns |
-| kernel out, `sendto` | 5,574 ns | 27,227 ns | 109,214 ns |
-| **engine work in total** | **434 ns** | **1,264 ns** | **16,858 ns** |
-| **tick to trade** | **13,346 ns** | **54,600 ns** | **436,899 ns** |
+| transport | in | decode | book | decide | out | engine | **total** |
+|---|---|---|---|---|---|---|---|
+| udp on loopback | 5,284 | 55 | 229 | 8 | 4,848 | 348 | **11,096** |
+| udp, connected sockets and recvmmsg | 4,921 | 71 | 216 | 8 | 4,413 | 351 | **10,258** |
+| af_unix datagrams | 2,548 | 58 | 206 | 8 | 1,450 | 326 | **5,426** |
+| spsc ring, no kernel in the path | 333 | 66 | 201 | 8 | 50 | 335 | **999** |
 
-**At the median the code in this repository is 3.2% of the path.** The other 97%
-is the kernel network stack, twice. Making the engine twice as fast would move
-the total by 1.6%.
+| transport | p50 | p99 | p99.9 | engine's share |
+|---|---|---|---|---|
+| udp on loopback | 11,096 | 54,599 | 436,897 | 3.1% |
+| udp, connected and recvmmsg | 10,258 | 54,599 | 218,441 | 3.4% |
+| af_unix | 5,426 | 54,599 | 109,213 | 6.0% |
+| spsc ring | 999 | 18,415 | 109,213 | 33.5% |
 
-That is the honest shape of the problem and it is why the industry buys network
-cards rather than compilers: the next order of magnitude is in kernel bypass,
-not in the book. There is no NIC here, no wire and no bypass, so 13.3 us is a
-floor on what a real path would cost rather than an estimate of one. A production
-system on the same shape of hardware with a bypass stack lands one to five
-microseconds wire to wire, and an FPGA feed handler lands well under one. This is
-not that, and the table is here so nobody has to take my word for which parts are
-fast.
+Reading down that ladder:
+
+- **Connecting the sockets is worth 7.5%.** A connected datagram socket pins the
+  route, so every later call skips the address copy and the lookup. `recvmmsg` is
+  in the same row and does nothing at this pacing, where there is one message
+  waiting at a time; it is there because it is what a real handler does when the
+  feed bursts, and leaving it out would flatter the row. `SO_BUSY_POLL` is asked
+  for and refused, and the tool says so: loopback is not a NAPI device, so busy
+  polling had nothing to poll.
+- **Dropping IP and UDP halves it.** AF_UNIX has the same syscalls and the same
+  scheduling with none of the protocol processing, so the 11,096 to 5,426 gap is
+  what the stack costs.
+- **Dropping the kernel entirely takes it to 999 ns, eleven times better than
+  UDP.** That is the lock free ring from `src/engine`, and it is not a bypass NIC.
+  It is the floor a bypass NIC is trying to reach, and having it measured is the
+  difference between saying kernel bypass is worth an order of magnitude and
+  showing it.
+- **The engine only starts to matter at the bottom.** It is 3.1% of the UDP path
+  and 33.5% of the ring path. Making the book twice as fast moves the first by
+  1.6% and the last by 17%. That is the honest shape of the problem, and it is
+  why the industry buys network cards before it buys compilers.
+
+The ring row first reported 1.7 ms on a path whose own stages summed to under
+700 ns. The feed was reading whatever reply happened to be waiting, which is
+harmless on a transport that drops when it is full and badly wrong on one that
+does not: one missed reply left a permanent backlog and every later sample timed
+a request from thousands of iterations earlier. Replies are matched to their
+request now.
+
+None of this is a network. No NIC, no wire, no switch, no bypass stack. Every
+figure is a floor on what a real path would cost.
+
+---
+
+## Order entry
+
+`src/wire/soup.hpp`, `src/wire/ouch.hpp`, `src/wire/session.hpp`,
+`tools/ouchgw.cpp`.
+
+The feed above is the market telling everyone what happened. Order entry is the
+other half of exchange connectivity, and it has the harder job: a TCP connection
+that can drop at any moment, and a client that has to be able to come back and
+find out exactly what became of the orders it sent.
+
+**SoupBinTCP** is the session layer. The framing is trivial, a two byte big
+endian length and a type byte. The contract is not:
+
+- everything the server sends as Sequenced Data is implicitly numbered, and the
+  numbers are not on the wire, both sides count;
+- on login the client names the sequence it wants to start from, and the server
+  answers with the one it will actually start from and replays from there;
+- a client that died after message 900 reconnects asking for 901 and gets 901
+  onward, byte for byte, as though nothing had happened.
+
+**OUCH** is what rides inside it. An order is named by a token the client chose,
+not by an identifier the exchange handed back, which is exactly what lets a
+client that lost its connection still know what to ask about. Enter, Cancel and
+Replace go up; Accepted, Executed, Canceled, Replaced and Rejected come back, and
+they come back on the sequenced stream so the answer survives a disconnection
+even though the question does not.
+
+The gateway binds all of that to the same matching engine: OUCH in becomes engine
+calls, engine events become OUCH out, and every outbound message goes through the
+store, so it is replayable by construction rather than by remembering to copy it
+somewhere.
+
+```
+./build/ouchgw --orders=20000 --drop-at=5000 --burst=800
+```
+
+| | |
+|---|---|
+| orders sent | 20,800 |
+| sequenced messages published | 20,800 |
+| TCP connections used | 2 |
+| published while the client was gone | 800 |
+| replayed on reconnect | 800 |
+| **missing or altered after recovery** | **0 of 20,800** |
+| order entry round trip, p50 | 22,972 ns |
+
+The recovery test is deliberately made to matter. A client that waits for each
+acknowledgement before sending the next order is never behind, so killing its
+connection proves nothing: the first version of this test replayed zero messages
+and passed. So the client now fires a burst with nobody reading, waits for the
+exchange to work through what is already in the socket buffer, and disappears
+without reading a single reply. Those 800 acknowledgements are published to
+somebody who is not there. On reconnect it asks for the next sequence it never
+saw and gets all 800 back, and every one is compared by digest against what the
+server stored.
+
+### Tested without a socket in sight
+
+The session state machine has no networking in it, which is the point. Two cases
+in `tests/test_ouch.cpp` carry most of the weight:
+
+- **Fragmentation.** TCP hands you arbitrary byte boundaries, and a parser that
+  works only when a read contains whole packets works only in testing. The
+  session is fed the same stream in chunks of 1, 2, 3, 7, 13 and 64 bytes, and
+  every one has to produce byte identical output to a single large read.
+- **Recovery fuzz.** 300 sessions, each published in random bursts, each
+  disconnected at a random byte offset part way through what the client was
+  reading, each resumed from wherever the client honestly got to. Every message
+  has to arrive exactly once, in order, unaltered. That is a few thousand
+  simulated disconnections, none of which needed a network.
+
+Plus the usual: framing, the right justified space padded numeric fields in the
+login handshake, message layouts by offset, orders refused before login, logout,
+and 2,000 rounds of random bytes that have to be survivable rather than fatal.
 
 ---
 
@@ -501,7 +611,8 @@ therefore plays both roles, and that is what makes two independent checks
 possible from one book.
 
 ```
-./build/ticktotrade --seconds=20 --feed-core=3 --engine-core=2
+./build/ticktotrade --all --seconds=20
+./build/ouchgw   --orders=20000 --drop-at=5000 --burst=800
 ./build/itchgen  --days=2026-08-13 --out=results/eth.itch
 ./build/itchfeed --check --data=data/raw --days=2026-08-13 results/eth.itch
 ```
@@ -805,7 +916,16 @@ about a maker who already holds queue position.
   throughput varies by about 20% on this box, which is reported rather than
   hidden by quoting a best run.
 - **Tick to trade is measured on loopback, not on a network.** It is a floor,
-  not an estimate of a real path, and it is dominated by the kernel stack. The medians are stable across runs; the maxima
+  not an estimate of a real path, and it is dominated by the kernel stack. The
+  ring row is not a bypass NIC, it is the floor one is trying to reach.
+- **The OUCH layouts are OUCH shaped, not certified OUCH.** The ITCH message
+  lengths in `src/wire/itch.hpp` match the published ITCH 5.0 sizes. For OUCH I
+  have not had the specification in front of me to certify every byte offset, so
+  the message set, the field lists and the semantics follow 4.2 while the exact
+  layouts are defined in the header and pinned by the tests. Saying which is
+  which is worth more than claiming both.
+- **The gateway serves one session.** No multi client fan out, no entitlements,
+  no risk or credit checks, no drop copy, no cancel on disconnect. The medians are stable across runs; the maxima
   are scheduler noise and are reported rather than trimmed. Concurrent work on
   the same machine changes these numbers by a factor of several, which is why the
   script asks for an idle box.
@@ -835,15 +955,15 @@ about a maker who already holds queue position.
 src/engine/     types, events, order book, id map, spsc ring, command dispatch,
                 multi symbol books
 src/wire/       big endian access, ITCH 5.0 layouts, MoldUDP64 framing, decoder,
-                sharded sequencer
+                sharded sequencer, SoupBinTCP framing and session, OUCH
 src/ml/         AVX2 kernels with scalar references, FTRL logistic, MLP,
                 features, dataset format, model loader
 src/util/       gzip line reader, cpu pinning, cycle timing and histograms
 src/replay/     raw file parsing, reconstruction, fidelity binary
 src/sim/        fill model, agent, simulation binary
 bench/          engine and kernel benchmarks
-tools/          itchgen, itchfeed, mlgen, mltrain, ticktotrade
-tests/          six test binaries, run by ctest
+tools/          itchgen, itchfeed, mlgen, mltrain, ticktotrade, ouchgw
+tests/          seven test binaries, run by ctest
 scripts/        run_bench.sh, run_experiment.sh, run_queue_model.sh, analyse.py,
                 skew_compare.py, compare_runs.py, tape_structure.py
 experiments/    pre-registration, amendments, results

@@ -82,10 +82,14 @@ target_link_libraries(mltrain PRIVATE ltx_engine ltx_data)
 add_executable(ticktotrade tools/ticktotrade.cpp)
 target_link_libraries(ticktotrade PRIVATE ltx_engine ltx_wire)
 
+add_executable(ouchgw tools/ouchgw.cpp)
+target_link_libraries(ouchgw PRIVATE ltx_engine ltx_wire)
+
 
 include(CTest)
 enable_testing()
-foreach(t test_order_book test_spsc test_id_map test_reconstruct test_wire test_ml)
+foreach(t test_order_book test_spsc test_id_map test_reconstruct test_wire test_ml
+        test_ouch)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE ltx_engine ltx_data ltx_wire)
   add_test(NAME ${t} COMMAND ${t})
