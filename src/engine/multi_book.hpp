@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "engine/engine.hpp"
+#include "engine/event_hash.hpp"
 
 namespace ltx {
 
@@ -32,11 +33,30 @@ class MultiBook {
     if (locate >= books_.size()) {
       books_.resize(static_cast<std::size_t>(locate) + 1);
       specs_.resize(static_cast<std::size_t>(locate) + 1);
+      hashers_.resize(static_cast<std::size_t>(locate) + 1);
     }
     if (!books_[locate]) {
-      books_[locate] = std::make_unique<MatchingEngine>(cfg_, sink_);
+      if (hashing_) {
+        hashers_[locate] = std::make_unique<EventHasher>(sink_);
+        books_[locate] = std::make_unique<MatchingEngine>(cfg_, hashers_[locate].get());
+      } else {
+        books_[locate] = std::make_unique<MatchingEngine>(cfg_, sink_);
+      }
       specs_[locate] = spec;
     }
+  }
+
+  // One hash per symbol rather than one for the whole feed. A global hash would
+  // depend on how events from different symbols interleaved, which is a property
+  // of the thread schedule and not of the engine. Per symbol, the hash cannot
+  // depend on the shard count, and that is the invariant worth asserting.
+  void enable_event_hashing() { hashing_ = true; }
+  bool hashing() const { return hashing_; }
+  std::uint64_t event_hash(std::uint16_t locate) const {
+    return (locate < hashers_.size() && hashers_[locate]) ? hashers_[locate]->value() : 0;
+  }
+  std::uint64_t event_count(std::uint16_t locate) const {
+    return (locate < hashers_.size() && hashers_[locate]) ? hashers_[locate]->events() : 0;
   }
 
   bool has(std::uint16_t locate) const {
@@ -64,7 +84,9 @@ class MultiBook {
   BookConfig cfg_;
   EventSink* sink_;
   std::vector<std::unique_ptr<MatchingEngine>> books_;
+  std::vector<std::unique_ptr<EventHasher>> hashers_;
   std::vector<SymbolSpec> specs_;
+  bool hashing_ = false;
 };
 
 // Order independent digest of one book's visible state. Two runs that produce

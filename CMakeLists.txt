@@ -35,6 +35,16 @@ target_link_options(ltx_flags INTERFACE
   $<$<CONFIG:Debug>:-fsanitize=address,undefined>
 )
 
+# Appended after everything else, so it wins. scripts/run_determinism.sh uses it
+# to build the same sources at a different optimisation level and require the
+# same event hashes, which is a check that nothing here depends on undefined
+# behaviour the optimiser is free to read differently.
+set(LTX_EXTRA_FLAGS "" CACHE STRING "flags appended last, for the determinism check")
+if(LTX_EXTRA_FLAGS)
+  separate_arguments(LTX_EXTRA_FLAGS_LIST NATIVE_COMMAND "${LTX_EXTRA_FLAGS}")
+  target_compile_options(ltx_flags INTERFACE ${LTX_EXTRA_FLAGS_LIST})
+endif()
+
 # Thread sanitizer build for the lock free queue. ASan and TSan cannot coexist,
 # so this is its own build type: -DCMAKE_BUILD_TYPE=TSan
 set(CMAKE_CXX_FLAGS_TSAN "-O1 -g -fsanitize=thread -fno-omit-frame-pointer"

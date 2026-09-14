@@ -22,12 +22,15 @@
 #include <string>
 #include <vector>
 
+#include "engine/event_hash.hpp"
 #include "engine/multi_book.hpp"
 #include "replay/loader.hpp"
 #include "util/affinity.hpp"
+#include "util/hugevec.hpp"
 #include "util/gzline.hpp"
 #include "util/timing.hpp"
 #include "wire/decoder.hpp"
+#include "wire/journal.hpp"
 #include "wire/sequencer.hpp"
 
 using namespace ltx;
@@ -44,6 +47,10 @@ struct Args {
   int core = -1;
   bool digest = false;
   bool quiet = false;
+  std::string journal;        // write every packet here
+  std::string from_journal;   // read packets from here instead of the file
+  bool event_hash = false;
+  int hugepages = 1;
 };
 
 void usage() {
@@ -57,6 +64,10 @@ void usage() {
       "  --shards=N         route to N threads by symbol and report per symbol digests\n"
       "  --core=N           pin the single threaded path to this cpu\n"
       "  --digest           print a digest per symbol\n"
+      "  --journal=FILE     record every packet, in order, for later replay\n"
+      "  --from-journal=F   replay packets from a journal instead of a feed file\n"
+      "  --event-hash       print a rolling hash of every event the engine emits\n"
+      "  --hugepages=0|1    ask for 2 MB pages for the book arrays, default 1\n"
       "  --quiet\n"
       "  --help\n");
 }
@@ -138,15 +149,46 @@ int main(int argc, char** argv) {
     else if (str("--days=", a.days)) {}
     else if (s == "--check") a.check = true;
     else if (s == "--digest") a.digest = true;
+    else if (str("--journal=", a.journal)) {}
+    else if (str("--from-journal=", a.from_journal)) {}
+    else if (s == "--event-hash") a.event_hash = true;
+    else if (s.rfind("--hugepages=", 0) == 0) a.hugepages = std::atoi(s.c_str() + 12);
     else if (s == "--quiet") a.quiet = true;
     else if (s.rfind("--shards=", 0) == 0) a.shards = std::atoi(s.c_str() + 9);
     else if (s.rfind("--core=", 0) == 0) a.core = std::atoi(s.c_str() + 7);
     else if (!s.empty() && s[0] != '-') a.file = s;
     else { std::fprintf(stderr, "unknown argument %s\n", s.c_str()); usage(); return 1; }
   }
-  if (a.file.empty()) { usage(); return 1; }
+  if (a.file.empty() && a.from_journal.empty()) { usage(); return 1; }
+  huge_pages_enabled() = a.hugepages != 0;
 
-  const std::vector<std::uint8_t> raw = read_file(a.file);
+  // A journal replays as a stream of packets with their original framing, so
+  // everything downstream cannot tell which it was handed. That is the point:
+  // the hashes have to match.
+  std::vector<std::uint8_t> raw;
+  if (!a.from_journal.empty()) {
+    JournalReader jr;
+    if (!jr.load(a.from_journal)) {
+      std::fprintf(stderr, "cannot read journal %s\n", a.from_journal.c_str());
+      return 1;
+    }
+    JournalRecord rec{};
+    std::uint64_t n = 0;
+    while (jr.next(rec)) {
+      std::uint8_t len[4];
+      store_be<std::uint32_t>(len, rec.len);
+      raw.insert(raw.end(), len, len + 4);
+      raw.insert(raw.end(), rec.data, rec.data + rec.len);
+      ++n;
+    }
+    if (!a.quiet) {
+      std::printf("journal              %s, %llu packets, %.1f MB\n", a.from_journal.c_str(),
+                  static_cast<unsigned long long>(n), jr.size() / 1048576.0);
+    }
+    a.file = a.from_journal;
+  } else {
+    raw = read_file(a.file);
+  }
   if (raw.empty()) { std::fprintf(stderr, "cannot read %s\n", a.file.c_str()); return 1; }
   if (a.core >= 0) pin_to_core(a.core);
 
@@ -294,16 +336,27 @@ int main(int argc, char** argv) {
   if (a.shards <= 1) {
     NullSink sink;
     MultiBook books(feed_cfg(), &sink);
+    if (a.event_hash) books.enable_event_hashing();
     Decoder dec;
+    std::unique_ptr<JournalWriter> jw;
+    if (!a.journal.empty()) {
+      jw = std::make_unique<JournalWriter>(a.journal);
+      if (!jw->ok()) {
+        std::fprintf(stderr, "cannot write journal %s\n", a.journal.c_str());
+        return 1;
+      }
+    }
     std::vector<Routed> buf;
     buf.reserve(1 << 12);
     std::uint64_t applied = 0;
     const double t0 = now_s();
     std::size_t off = 0;
+    std::uint64_t jts = 0;
     while (off + 4 <= raw.size()) {
       const std::uint32_t plen = load_be<std::uint32_t>(raw.data() + off);
       off += 4;
       if (plen == 0 || off + plen > raw.size()) break;
+      if (jw) jw->append(++jts, raw.data() + off, plen);
       buf.clear();
       dec.decode_packet(raw.data() + off, plen, buf);
       off += plen;
@@ -321,6 +374,21 @@ int main(int argc, char** argv) {
                 raw.size() / t / 1048576.0);
     std::printf("                     %llu commands applied\n",
                 static_cast<unsigned long long>(applied));
+    if (jw) {
+      std::printf("journal              %s, %llu packets, %.1f MB\n", a.journal.c_str(),
+                  static_cast<unsigned long long>(jw->records()), jw->bytes() / 1048576.0);
+      jw->close();
+    }
+    if (a.event_hash) {
+      for (std::size_t i = 1; i < books.size(); ++i) {
+        const std::uint16_t loc = static_cast<std::uint16_t>(i);
+        if (!books.has(loc)) continue;
+        std::printf("EVENT HASH %-10s %016llx over %llu events\n",
+                    books.spec(loc).symbol.c_str(),
+                    static_cast<unsigned long long>(books.event_hash(loc)),
+                    static_cast<unsigned long long>(books.event_count(loc)));
+      }
+    }
     if (a.digest) {
       for (std::size_t i = 1; i < books.size(); ++i) {
         const std::uint16_t loc = static_cast<std::uint16_t>(i);
@@ -338,6 +406,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < a.shards; ++i) {
       shards.push_back(std::make_unique<Shard>(feed_cfg(), 1u << 15, -1));
       shards.back()->set_specs(specs);
+      if (a.event_hash) shards.back()->books().enable_event_hashing();
     }
     for (auto& sh : shards) sh->start();
 
@@ -366,6 +435,16 @@ int main(int argc, char** argv) {
                 raw.size() / t / 1048576.0, a.shards);
     std::printf("                     %llu commands applied\n",
                 static_cast<unsigned long long>(applied));
+    if (a.event_hash) {
+      for (std::size_t loc = 1; loc < specs.size(); ++loc) {
+        Shard& sh = *shards[loc % a.shards];
+        const std::uint16_t l = static_cast<std::uint16_t>(loc);
+        if (!sh.books().has(l)) continue;
+        std::printf("EVENT HASH %-10s %016llx over %llu events\n", specs[loc].symbol.c_str(),
+                    static_cast<unsigned long long>(sh.books().event_hash(l)),
+                    static_cast<unsigned long long>(sh.books().event_count(l)));
+      }
+    }
     if (a.digest) {
       for (std::size_t loc = 1; loc < specs.size(); ++loc) {
         Shard& sh = *shards[loc % a.shards];
