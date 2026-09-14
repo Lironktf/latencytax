@@ -6,3 +6,28 @@ stat::peak_rss_mb:              419
   no crashes
 
 == fuzz_soup, 200s ==
+stat::average_exec_per_sec:     27579
+stat::new_units_added:          765
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              548
+  no crashes
+
+== fuzz_book, 200s ==
+stat::average_exec_per_sec:     67
+stat::new_units_added:          288
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              136
+  no crashes
+
+== fuzz_json, 200s ==
+stat::average_exec_per_sec:     21220
+stat::new_units_added:          4712
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              450
+  no crashes
+
+corpus after the run:
+  itch     251 inputs
+  soup     153 inputs
+  book     204 inputs
+  json     287 inputs

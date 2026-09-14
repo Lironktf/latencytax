@@ -17,6 +17,7 @@
 #include "engine/multi_book.hpp"
 #include "wire/decoder.hpp"
 #include "wire/encoder.hpp"
+#include "wire/itch_fixed.hpp"
 #include "wire/itch.hpp"
 
 using namespace ltx;
@@ -381,6 +382,67 @@ void test_corruption_fuzz() {
   CHECK(decoded > 0);   // the undamaged trials still produced work
 }
 
+// The fixed latency decoder exists to have the same output as the obvious one,
+// not merely a similar one. If the two ever disagree the benchmark comparing
+// them is meaningless, so every message type is checked field for field, and
+// then a few thousand random ones on top.
+void test_fixed_decoder_matches_the_switch() {
+  std::uint8_t pad[128];
+  std::mt19937_64 rng(31337);
+  std::size_t mismatches = 0;
+
+  auto compare = [&](std::size_t len) {
+    Command a{}, b{};
+    const unsigned ra = decode_switch(pad, len, 1, a);
+    const unsigned rb = decode_fixed(pad, len, 1, b);
+    if (ra != rb) { ++mismatches; return; }
+    if (!ra) return;
+    if (a.ts != b.ts || a.id != b.id || a.id2 != b.id2 || a.qty != b.qty ||
+        a.tick != b.tick || a.type != b.type || a.side != b.side || a.tif != b.tif) {
+      ++mismatches;
+    }
+  };
+
+  for (int i = 0; i < 4000; ++i) {
+    std::memset(pad, 0, sizeof(pad));
+    const int pick = i % 6;
+    std::size_t n = 0;
+    const std::uint64_t seq = rng();
+    const Tick tick = static_cast<Tick>(1 + rng() % 200000);
+    const std::uint32_t sh = static_cast<std::uint32_t>(rng() % 4000000);
+    switch (pick) {
+      case 0:
+        n = encode_add(pad, 1, 0, rng() & 0xFFFFFFFFFFFFull, seq, (rng() & 1) ? 'B' : 'S', sh,
+                       "ETH     ", tick_to_wire_price(tick, 1));
+        break;
+      case 1: n = encode_executed(pad, 1, 0, rng() & 0xFFFFFF, seq, sh, rng()); break;
+      case 2: n = encode_cancel(pad, 1, 0, rng() & 0xFFFFFF, seq, sh); break;
+      case 3: n = encode_delete(pad, 1, 0, rng() & 0xFFFFFF, seq); break;
+      case 4:
+        n = encode_replace(pad, 1, 0, rng() & 0xFFFFFF, seq, seq + 1, sh,
+                           tick_to_wire_price(tick, 1));
+        break;
+      default:
+        // A type neither handles, and a length that disagrees with the type.
+        n = encode_delete(pad, 1, 0, rng() & 0xFFFFFF, seq);
+        if (rng() & 1) pad[0] = static_cast<std::uint8_t>('Q');
+        else n += 1;
+        break;
+    }
+    compare(n);
+  }
+  CHECK_EQ(mismatches, size_t(0));
+
+  // A length that disagrees with the type is refused by both, not guessed at.
+  std::memset(pad, 0, sizeof(pad));
+  encode_add(pad, 1, 0, 1, 1, 'B', 10, "ETH     ", 1000);
+  Command a{}, b{};
+  CHECK_EQ(decode_switch(pad, 35, 1, a), 0u);
+  CHECK_EQ(decode_fixed(pad, 35, 1, b), 0u);
+  CHECK_EQ(decode_switch(pad, 36, 1, a), 1u);
+  CHECK_EQ(decode_fixed(pad, 36, 1, b), 1u);
+}
+
 }  // namespace
 
 int main() {
@@ -393,6 +455,7 @@ int main() {
   RUN(test_sequence_gap);
   RUN(test_unknown_symbol_and_type);
   RUN(test_decode_into_book);
+  RUN(test_fixed_decoder_matches_the_switch);
   RUN(test_corruption_fuzz);
   return ltxtest::summary();
 }

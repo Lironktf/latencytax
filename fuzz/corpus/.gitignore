@@ -1,0 +1,17 @@
+# Seeds are committed so a fresh clone starts somewhere sensible. The inputs
+# libFuzzer discovers are not: they are machine specific, they grow without
+# bound, and scripts/run_fuzz.sh regenerates as good a corpus in three minutes.
+*
+!.gitignore
+!*/
+*/*
+!itch/day.bin
+!itch/small.bin
+!soup/login0.bin
+!soup/login1.bin
+!soup/session.bin
+!book/ops1.bin
+!book/ops2.bin
+!json/book.jsonl
+!json/trades.jsonl
+!json/px.txt

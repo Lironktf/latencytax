@@ -375,106 +375,109 @@ int main(int argc, char** argv) {
       }
     };
 
-    auto time_decoder = [&](const char* name, bool fixed, CycleHist& h) {
+    std::printf("ITCH decode, a switch against a table, same signature and same output\n\n");
+    std::printf("%-26s %12s %12s %10s\n", "decoder", "clustered", "shuffled", "change");
+
+    // Throughput first, with no timer in the loop. One decode costs on the order
+    // of ten cycles, well under the cost of an rdtscp pair, so a per message
+    // timer would mostly be measuring itself.
+    auto throughput = [&](bool fixed, bool clustered) {
+      build(clustered);
       Command c{};
       std::uint64_t produced = 0;
-      // Warm up, then measure.
-      for (int pass = 0; pass < 6; ++pass) {
+      // The minimum over passes rather than the mean. Every source of error in a
+      // microbenchmark on a shared machine adds time: a migration, a steal, a
+      // neighbour evicting the cache. None of them make it faster, so the
+      // fastest pass is the one least contaminated by things that are not the
+      // code. The mean over passes moved by 50% run to run here; the minimum
+      // moves by a few percent.
+      double best = 1e18;
+      for (int pass = 0; pass < 24; ++pass) {
+        const bool measure = pass >= 4;
+        const double t0 = now_s();
         for (const Msg& m : msgs) {
           const std::uint8_t* p = buf.data() + m.off;
-          if (fixed) {
-            produced += decode_fixed(p, m.len, 1, c);
-          } else {
-            Decoder d;
-            std::vector<Routed> out;
-            (void)d;
-            (void)out;
-            produced += 1;
-          }
+          produced += fixed ? decode_fixed(p, m.len, 1, c) : decode_switch(p, m.len, 1, c);
+          // Consume the decoded fields, or the compiler is free to notice that
+          // only the last command is ever read and skip most of the stores.
+          produced += c.id ^ static_cast<std::uint64_t>(c.qty) ^
+                      static_cast<std::uint64_t>(static_cast<std::uint32_t>(c.tick)) ^
+                      c.id2;
         }
+        const double dt = now_s() - t0;
+        if (measure && dt < best) best = dt;
+        do_not_optimize(produced);
       }
-      (void)name;
-      (void)h;
-      return produced;
+      return static_cast<double>(msgs.size()) / best / 1e6;
     };
-    (void)time_decoder;
 
-    Decoder branchy;
-    std::vector<Routed> sink_out;
-    sink_out.reserve(8);
-    // The branching decoder's public entry point takes a whole packet, so for a
-    // like for like comparison it is driven one message at a time through a
-    // single message packet built once and rewritten in place.
-    std::vector<std::uint8_t> pkt(1u << 10, 0);
-    std::memcpy(pkt.data(), "LTXBENCH  ", kSessionLen);
-    store_be<std::uint16_t>(pkt.data() + kSessionLen + 8, 1);
-    {
-      // The decoder needs a directory before it will emit anything.
-      std::uint8_t dir[64];
-      const std::size_t dn = encode_symbol_directory(dir, 1, 0, "ETH     ", 1, 4);
-      store_be<std::uint64_t>(pkt.data() + kSessionLen, 1);
-      store_be<std::uint16_t>(pkt.data() + kMoldHeaderLen, static_cast<std::uint16_t>(dn));
-      std::memcpy(pkt.data() + kMoldHeaderLen + 2, dir, dn);
-      sink_out.clear();
-      branchy.decode_packet(pkt.data(), kMoldHeaderLen + 2 + dn, sink_out);
-    }
+    const double sw_c = throughput(false, true);
+    const double sw_s = throughput(false, false);
+    const double fx_c = throughput(true, true);
+    const double fx_s = throughput(true, false);
+    std::printf("%-26s %10.2f M %10.2f M %9.1f%%\n", "switch on the type", sw_c, sw_s,
+                100.0 * (sw_s - sw_c) / sw_c);
+    std::printf("%-26s %10.2f M %10.2f M %9.1f%%\n", "table indexed by type", fx_c, fx_s,
+                100.0 * (fx_s - fx_c) / fx_c);
 
-    std::printf("ITCH decode, branching against fixed latency\n");
-    std::printf("%-30s %8s %8s %8s %9s %9s %10s\n", "decoder and message order", "p50",
-                "p90", "p99", "p99.9", "spread", "M msg/s");
-
-    for (int order = 0; order < 2; ++order) {
-      const bool clustered = order == 0;
-      build(clustered);
-      const char* label = clustered ? "clustered" : "shuffled";
-
-      for (int which = 0; which < 2; ++which) {
-        const bool fixed = which == 1;
+    // A per message tail is not measurable here. One decode is four or five
+    // cycles and an rdtscp pair costs about forty, so bracketing each call would
+    // report the clock. Blocks of 256 put the reading an order of magnitude
+    // above the timer, which resolves how steady the sustained rate is but says
+    // nothing about the tail of any single message. That is a limitation of this
+    // machine, not a result, and the numbers below are labelled accordingly.
+    std::printf("\n%-26s %10s %9s %9s %9s %9s\n", "per msg, blocks of 256", "order",
+                "p50", "p99", "p99.9", "spread");
+    for (int which = 0; which < 2; ++which) {
+      const bool fixed = which == 1;
+      for (int order = 0; order < 2; ++order) {
+        const bool clustered = order == 0;
+        build(clustered);
         CycleHist h;
         Command c{};
         std::uint64_t produced = 0;
-        double timed = 0;
-        for (int pass = 0; pass < 12; ++pass) {
-          const bool measure = pass >= 4;
-          const double t0 = now_s();
-          for (const Msg& m : msgs) {
-            const std::uint8_t* p = buf.data() + m.off;
-            if (fixed) {
-              const std::uint64_t s0 = rdtsc_begin();
-              produced += decode_fixed(p, m.len, 1, c);
-              const std::uint64_t s1 = rdtsc_end();
-              if (measure) h.add(s1 - s0);
-            } else {
-              std::memcpy(pkt.data() + kMoldHeaderLen + 2, p, m.len);
-              store_be<std::uint16_t>(pkt.data() + kMoldHeaderLen,
-                                      static_cast<std::uint16_t>(m.len));
-              sink_out.clear();
-              const std::uint64_t s0 = rdtsc_begin();
-              branchy.decode_packet(pkt.data(), kMoldHeaderLen + 2 + m.len, sink_out);
-              const std::uint64_t s1 = rdtsc_end();
-              if (measure) h.add(s1 - s0);
-              produced += sink_out.size();
+        for (int pass = 0; pass < 10; ++pass) {
+          const bool measure = pass >= 3;
+          for (std::size_t i = 0; i + 256 <= msgs.size(); i += 256) {
+            const std::uint64_t s0 = rdtsc_begin();
+            for (std::size_t k = 0; k < 256; ++k) {
+              const Msg& m = msgs[i + k];
+              const std::uint8_t* p = buf.data() + m.off;
+              produced += fixed ? decode_fixed(p, m.len, 1, c) : decode_switch(p, m.len, 1, c);
+              produced += c.id ^ static_cast<std::uint64_t>(c.qty);
             }
+            const std::uint64_t s1 = rdtsc_end();
+            if (measure) h.add((s1 - s0) / 256);
           }
-          if (measure) timed += now_s() - t0;
+          do_not_optimize(produced);
         }
-        char name[64];
-        std::snprintf(name, sizeof(name), "%s, %s", fixed ? "fixed" : "branching", label);
-        const double p50 = to_ns(h.pct_cycles(50), ghz, overhead);
-        const double p999 = to_ns(h.pct_cycles(99.9), ghz, overhead);
-        std::printf("%-30s %7.0fns %7.0fns %7.0fns %8.0fns %8.0fns %10.2f\n", name, p50,
-                    to_ns(h.pct_cycles(90), ghz, overhead),
-                    to_ns(h.pct_cycles(99), ghz, overhead), p999, p999 - p50,
-                    h.count() / timed / 1e6);
-        (void)produced;
+        const double p50 = to_ns(h.pct_cycles(50), ghz, overhead / 256.0);
+        const double p999 = to_ns(h.pct_cycles(99.9), ghz, overhead / 256.0);
+        std::printf("%-26s %10s %8.1fns %8.1fns %8.1fns %8.1fns\n",
+                    fixed ? "table indexed by type" : "switch on the type",
+                    clustered ? "clustered" : "shuffled", p50,
+                    to_ns(h.pct_cycles(99), ghz, overhead / 256.0), p999, p999 - p50);
       }
     }
-    std::printf("\nspread is p99.9 minus p50: how much the cost depends on what arrived.\n");
-    std::printf("the fixed decoder is not trying to be faster on average. it is trying to\n");
-    std::printf("be the same every time, which is what a hardware handler gives you for\n");
-    std::printf("free and what a switch statement does not.\n");
+
+    std::printf("\nthe switch is faster on clustered input and the table is faster on\n");
+    std::printf("shuffled input. that is the whole tradeoff and it is worth stating plainly\n");
+    std::printf("rather than picking the ordering that flatters one of them. a branch\n");
+    std::printf("predictor handed runs of one message type learns them and the switch wins.\n");
+    std::printf("handed an order it cannot learn, the switch loses most of its speed while\n");
+    std::printf("the table gives up much less, because the type selects an address rather\n");
+    std::printf("than a jump.\n");
+    std::printf("\nclustered is what a real feed looks like. shuffled is what a feed looks\n");
+    std::printf("like during the minute you care about, when every instrument moves at once.\n");
+    std::printf("\nthe throughput row is the evidence. the block row resolves how steady\n");
+    std::printf("the sustained rate is and nothing about a single message tail, because a\n");
+    std::printf("decode is four or five cycles and the timer costs about forty.\n");
+    std::printf("\nbranch miss counters would settle it directly. this KVM guest does not\n");
+    std::printf("expose a PMU, so the evidence is sensitivity to message order rather than\n");
+    std::printf("a counter, and that is a limitation rather than a choice.\n");
     return 0;
   }
+
 
   if (a.kernels) {
     // The queue model runs inside the replay loop, once per resting quote per
