@@ -1,0 +1,7 @@
+AS arrival decay fit over 4 days, 110264 prints
+  distance of a print from the prevailing mid, USD:
+    mean 0.11518  median 0.05000  p90 0.30000  p99 0.75000  max 4.4500
+    at the touch (half a tick): 76.49% of prints
+  k = 1/mean = 8.6820 per USD (unweighted)
+  k = 1/mean = 5.9541 per USD (weighted by traded size)
+  at gamma=5, the AS spread term (2/gamma)*ln(1+gamma/k) is 0.1819 USD = 1.82 ticks

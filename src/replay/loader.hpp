@@ -47,10 +47,12 @@ struct RawTrade {
   std::uint64_t tid = 0;
   Tick tick = 0;
   Qty qty = 0;
-  // Side of the aggressor. The raw feed writes "A" or "B"; on this data 96% of
-  // "A" prints land at or below the prevailing bid and 96% of "B" prints at or
-  // above the prevailing ask, so "A" is a seller hitting the bid and "B" is a
-  // buyer lifting the offer. The check is in scripts/check_trade_side.py.
+  // Side of the aggressor. The raw feed writes "A" or "B". Measured against the
+  // prevailing snapshot best bid and offer over all 39 days, 89.14% of "A"
+  // prints land at or below the bid and 89.72% of "B" prints at or above the
+  // ask, so "A" is a seller hitting the bid and "B" is a buyer lifting the
+  // offer. The residual is the five second snapshot going stale, not ambiguity
+  // about the convention. The check is scripts/tape_structure.py.
   Side aggressor = Side::Buy;
 };
 

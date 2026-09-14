@@ -1,0 +1,43 @@
+days 39  (2026-08-07 .. 2026-09-14)
+snapshots 639307   prints 1009459
+
+price range: 1853.1 to 2663.0 USD, median mid 2443.4
+one tick of 0.1 USD at the median mid is 0.4093 bps, so a half spread at the touch is 0.2046 bps
+spread, in ticks of 0.1 USD:
+   1 tick    629011   98.39%
+   2 tick      4779    0.75%
+   3 tick      2555    0.40%
+   4 tick      1332    0.21%
+   5 tick       693    0.11%
+best bid unchanged between consecutive snapshots: 60.22%
+
+gap between consecutive prints, 1009458 gaps
+              bucket     count    share      cum
+           0 to 1 ms    307981   30.51%   30.51%
+           1 to 2 ms         4    0.00%   30.51%
+           2 to 5 ms         1    0.00%   30.51%
+          5 to 10 ms         1    0.00%   30.51%
+         10 to 20 ms         7    0.00%   30.51%
+         20 to 30 ms        13    0.00%   30.51%
+         30 to 50 ms       521    0.05%   30.56%
+         50 to 70 ms     17949    1.78%   32.34%
+        70 to 100 ms      8774    0.87%   33.21%
+       100 to 150 ms     23945    2.37%   35.58%
+       150 to 200 ms     11673    1.16%   36.74%
+       200 to 300 ms     34656    3.43%   40.17%
+       300 to 500 ms     52504    5.20%   45.37%
+      500 to 1000 ms    113210   11.21%   56.59%
+       above 1000 ms    438219   43.41%  100.00%
+  non-zero gaps: p1 65 ms, p5 130 ms, p50 1482 ms
+
+print price against the prevailing snapshot best bid and offer
+  side "A": 434365 prints
+         at or below the bid:   387200   89.14%
+           inside the spread:     2320    0.53%
+         at or above the ask:    44845   10.32%
+  side "B": 575084 prints
+         at or below the bid:    56406    9.81%
+           inside the spread:     2735    0.48%
+         at or above the ask:   515943   89.72%
+
+conclusion: "A" is a seller hitting the bid, "B" is a buyer lifting the offer.

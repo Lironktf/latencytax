@@ -1,0 +1,13 @@
+inventory skew on (gamma=5.0) versus off (gamma=0.0), latency 0.1 ms, requote 3
+5 days, 10000 bootstrap draws over days
+
+                metric      skew on     skew off   difference                 [95% CI]
+        markout 1s bps      -0.4208      -0.8042       0.3835 [    0.1200,    0.4669]
+        markout 5s bps      -0.4937      -0.8952       0.4015 [    0.1112,    0.4716]
+       markout 30s bps      -0.6507      -1.1019       0.4511 [    0.0263,    0.5707]
+      markout 300s bps      -0.6867      -1.1342       0.4475 [   -0.0955,    0.9289]
+              edge_bps      -2.6412      -2.3670      -0.2741 [   -2.6237,    1.7017]
+ max abs inventory ETH       1.8401      25.4754     -23.6353 [  -24.1380,  -23.0027]
+
+                 fills         1451        11044
+           net pnl usd      -215.21     -1827.44

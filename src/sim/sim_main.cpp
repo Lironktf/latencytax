@@ -53,6 +53,7 @@ struct Args {
   std::string hourly_csv;
   bool fit_beta = false;
   bool fit_k = false;
+  bool tape_markout = false;
   bool quiet = false;
 };
 
@@ -83,6 +84,7 @@ void usage() {
       "  --hourly-csv=FILE   write hourly marked to market pnl per agent\n"
       "  --fit-beta          report the order flow regression instead of running agents\n"
       "  --fit-k             fit the AS order arrival decay from the tape and exit\n"
+      "  --tape-markout      markout of the average maker over every print, then exit\n"
       "  --quiet\n"
       "  --help\n");
 }
@@ -140,6 +142,7 @@ bool parse_args(int argc, char** argv, Args& a) {
     else if (num("--taker-bps=", a.fees.taker_bps)) {}
     else if (s == "--fit-beta") a.fit_beta = true;
     else if (s == "--fit-k") a.fit_k = true;
+    else if (s == "--tape-markout") a.tape_markout = true;
     else if (s == "--quiet") a.quiet = true;
     else { std::fprintf(stderr, "unknown argument %s\n", s.c_str()); usage(); return false; }
   }
@@ -234,7 +237,7 @@ struct Row {
   double fees = 0;
   double net_pnl = 0;
   double edge_bps = 0;
-  double mo1 = 0, mo5 = 0, mo30 = 0;
+  double mo1 = 0, mo5 = 0, mo30 = 0, mo60 = 0, mo300 = 0;
   std::uint64_t mo_n = 0;
   double max_abs_inv = 0;
   double end_inv = 0;
@@ -281,6 +284,62 @@ int main(int argc, char** argv) {
   cfg.max_tick = 262144;
   cfg.max_orders = 1u << 16;
   cfg.id_map_capacity = 1u << 17;
+
+  // --- population maker markout -------------------------------------------
+  if (a.tape_markout) {
+    // Every print is a fill for whoever was resting at that price. Signing by
+    // the maker's side and marking against the later snapshot mid gives the
+    // markout of the average maker on this tape, with no agent and no fill
+    // model in the way. It is the benchmark the simulated agent is measured
+    // against.
+    const int H = 5;
+    const std::int64_t horizons[H] = {1000, 5000, 30000, 60000, 300000};
+    double sum[H] = {0, 0, 0, 0, 0};
+    double wsum[H] = {0, 0, 0, 0, 0};
+    double w_total = 0;
+    std::uint64_t n = 0;
+    for (const std::string& day : days) {
+      LoadStats bs{}, ts{};
+      auto snaps = load_snapshots(book_root, day, 1, bs);
+      auto trades = load_trades(trade_root, day, 1, ts);
+      if (snaps.size() < 2) continue;
+      std::vector<std::int64_t> mt;
+      std::vector<double> mp;
+      mt.reserve(snaps.size());
+      mp.reserve(snaps.size());
+      for (const Snapshot& sn : snaps) {
+        if (sn.n_bids == 0 || sn.n_asks == 0) continue;
+        mt.push_back(sn.time_ms);
+        mp.push_back(0.5 * (sn.bids[0].tick + sn.asks[0].tick) * 0.1);
+      }
+      for (const RawTrade& t : trades) {
+        const double px = static_cast<double>(t.tick) * 0.1;
+        // The maker is on the opposite side of the aggressor.
+        const double sgn = (t.aggressor == Side::Buy) ? -1.0 : 1.0;
+        const double w = static_cast<double>(t.qty) / kQtyScale;
+        double v[H];
+        bool ok = true;
+        for (int h = 0; h < H; ++h) {
+          const auto it = std::lower_bound(mt.begin(), mt.end(), t.time_ms + horizons[h]);
+          if (it == mt.end()) { ok = false; break; }
+          v[h] = sgn * (mp[static_cast<std::size_t>(it - mt.begin())] - px) / px * 1e4;
+        }
+        if (!ok) continue;
+        for (int h = 0; h < H; ++h) { sum[h] += v[h]; wsum[h] += v[h] * w; }
+        w_total += w;
+        ++n;
+      }
+    }
+    if (!n) { std::fprintf(stderr, "no prints\n"); return 1; }
+    std::printf("markout of the average maker, every print, %zu days, %llu prints\n",
+                days.size(), static_cast<unsigned long long>(n));
+    std::printf("  %-10s %12s %12s\n", "horizon", "per print", "size wtd");
+    const char* names[H] = {"1 s", "5 s", "30 s", "60 s", "300 s"};
+    for (int h = 0; h < H; ++h) {
+      std::printf("  %-10s %+12.4f %+12.4f\n", names[h], sum[h] / n, wsum[h] / w_total);
+    }
+    return 0;
+  }
 
   // --- AS arrival intensity fit -------------------------------------------
   if (a.fit_k) {
@@ -428,9 +487,10 @@ int main(int argc, char** argv) {
     csv = std::fopen(a.csv.c_str(), "w");
     if (!csv) { std::fprintf(stderr, "cannot write %s\n", a.csv.c_str()); return 1; }
     std::fprintf(csv,
-                 "day,latency_ms,gamma,offset_ticks,beta,kappa,maker_fills,swept_fills,"
-                 "requote_ticks,requotes,maker_notional,taker_notional,gross_pnl,fees,net_pnl,edge_bps,"
-                 "markout_1s_bps,markout_5s_bps,markout_30s_bps,markout_n,max_abs_inv_eth,"
+                 "day,latency_ms,gamma,offset_ticks,beta,kappa,requote_ticks,maker_fills,"
+                 "swept_fills,requotes,maker_notional,taker_notional,gross_pnl,fees,net_pnl,edge_bps,"
+                 "markout_1s_bps,markout_5s_bps,markout_30s_bps,markout_60s_bps,"
+                 "markout_300s_bps,markout_n,max_abs_inv_eth,"
                  "end_inv_eth,buy_eth,sell_eth,maker_bps,taker_bps\n");
   }
   std::FILE* hcsv = nullptr;
@@ -499,7 +559,7 @@ int main(int argc, char** argv) {
       r.requote = configs[ci].requote_ticks;
       r.requotes = ag.requotes();
 
-      double mo1 = 0, mo5 = 0, mo30 = 0;
+      double mo1 = 0, mo5 = 0, mo30 = 0, mo60 = 0, mo300 = 0;
       std::uint64_t mo_n = 0;
       for (const Fill& f : ag.fills()) {
         const double px = static_cast<double>(f.tick) * 0.1;
@@ -507,14 +567,20 @@ int main(int argc, char** argv) {
         if (!f.taker) {
           const double s = f.side == Side::Buy ? 1.0 : -1.0;
           const std::int64_t t_ms = f.ts_us / 1000;
-          bool ok1 = false, ok5 = false, ok30 = false;
+          bool ok1 = false, ok5 = false, ok30 = false, ok60 = false, ok300 = false;
           const double m1 = mid_at(obs.mid_ts(), obs.mid_px(), t_ms + 1000, ok1);
           const double m5 = mid_at(obs.mid_ts(), obs.mid_px(), t_ms + 5000, ok5);
           const double m30 = mid_at(obs.mid_ts(), obs.mid_px(), t_ms + 30000, ok30);
-          if (ok1 && ok5 && ok30) {
+          const double m60 = mid_at(obs.mid_ts(), obs.mid_px(), t_ms + 60000, ok60);
+          const double m300 = mid_at(obs.mid_ts(), obs.mid_px(), t_ms + 300000, ok300);
+          // All horizons are required so every reported markout is over the
+          // same set of fills; fills near the end of the day drop out.
+          if (ok1 && ok5 && ok30 && ok60 && ok300) {
             mo1 += s * (m1 - px) / px * 1e4;
             mo5 += s * (m5 - px) / px * 1e4;
             mo30 += s * (m30 - px) / px * 1e4;
+            mo60 += s * (m60 - px) / px * 1e4;
+            mo300 += s * (m300 - px) / px * 1e4;
             ++mo_n;
           }
         }
@@ -527,7 +593,10 @@ int main(int argc, char** argv) {
         }
       }
       r.mo_n = mo_n;
-      if (mo_n) { r.mo1 = mo1 / mo_n; r.mo5 = mo5 / mo_n; r.mo30 = mo30 / mo_n; }
+      if (mo_n) {
+        r.mo1 = mo1 / mo_n; r.mo5 = mo5 / mo_n; r.mo30 = mo30 / mo_n;
+        r.mo60 = mo60 / mo_n; r.mo300 = mo300 / mo_n;
+      }
 
       r.maker_fills = ag.maker_fills();
       r.swept_fills = ag.swept_fills();
@@ -554,13 +623,13 @@ int main(int argc, char** argv) {
       if (csv) {
         std::fprintf(csv,
                      "%s,%.4f,%.6f,%d,%.8f,%.4f,%d,%llu,%llu,%llu,%.4f,%.4f,%.6f,%.6f,%.6f,"
-                     "%.8f,%.8f,%.8f,%.8f,%llu,%.6f,%.6f,%.6f,%.6f,%.4f,%.4f\n",
+                     "%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%llu,%.6f,%.6f,%.6f,%.6f,%.4f,%.4f\n",
                      day.c_str(), r.latency_ms, r.gamma, static_cast<int>(r.offset), r.beta,
                      r.kappa, static_cast<int>(r.requote), static_cast<unsigned long long>(r.maker_fills),
                      static_cast<unsigned long long>(r.swept_fills),
                      static_cast<unsigned long long>(r.requotes), r.maker_notional,
                      r.taker_notional, r.gross_pnl, r.fees, r.net_pnl, r.edge_bps, r.mo1,
-                     r.mo5, r.mo30, static_cast<unsigned long long>(r.mo_n), r.max_abs_inv,
+                     r.mo5, r.mo30, r.mo60, r.mo300, static_cast<unsigned long long>(r.mo_n), r.max_abs_inv,
                      r.end_inv, r.buy_eth, r.sell_eth, a.fees.maker_bps, a.fees.taker_bps);
       }
       all.push_back(r);
@@ -591,7 +660,7 @@ int main(int argc, char** argv) {
   // Pooled summary per agent config, so a sweep is readable without the csv.
   std::printf("\npooled over %zu days\n", days.size());
   std::printf("%8s %6s %4s %4s %8s %6s %9s %7s %12s %9s %9s %9s %9s\n", "lat(ms)", "gamma", "off",
-              "rq", "beta", "kappa", "fills", "swept%", "notional", "net_pnl", "edge_bps", "mo5s", "mo30s");
+              "rq", "beta", "kappa", "fills", "swept%", "notional", "net_pnl", "edge_bps", "mo5s", "mo300s");
   for (std::size_t ci = 0; ci < configs.size(); ++ci) {
     double notional = 0, net = 0, mo5 = 0, mo30 = 0;
     std::uint64_t fills = 0, mo_n = 0, swept = 0;
@@ -607,7 +676,7 @@ int main(int argc, char** argv) {
       fills += r.maker_fills;
       swept += r.swept_fills;
       mo5 += r.mo5 * r.mo_n;
-      mo30 += r.mo30 * r.mo_n;
+      mo30 += r.mo300 * r.mo_n;
       mo_n += r.mo_n;
     }
     std::printf("%8.2f %6.2f %4d %4d %8.5f %6.2f %9llu %6.1f%% %12.0f %9.2f %9.4f %9.4f %9.4f\n",

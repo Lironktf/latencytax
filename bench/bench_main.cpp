@@ -117,7 +117,7 @@ const char* kOpName[] = {"add (rests)", "add (marketable)", "cancel", "modify"};
 // venue too.
 class FlowGen {
  public:
-  FlowGen(const Args& a, Tick mid) : a_(a), rng_(a.seed), mid_(mid) {
+  FlowGen(const Args& a, Tick mid) : a_(a), rng_(a.seed), mid_(mid), mid0_(mid) {
     live_.reserve(a.max_live * 2);
   }
 
@@ -142,9 +142,16 @@ class FlowGen {
       } else {
         emit_add(out[i], kinds[i], true);
       }
-      // A slow random walk in the mid keeps the hot region of the level array
-      // moving instead of sitting on one cache line for the whole run.
-      if ((rng_() & 2047) == 0) mid_ += (rng_() & 1) ? 1 : -1;
+      // The mid walks, so the hot region of the level array moves instead of
+      // sitting on one cache line for the whole run. It walks slowly and inside
+      // a band: if it drifted further than the quoted depth over the lifetime
+      // of a resting order, most of the book would be stale and crossable, and
+      // the benchmark would turn into a sweep test rather than a book test.
+      if ((rng_() & 65535) == 0) {
+        const Tick step = (rng_() & 1) ? 1 : -1;
+        const Tick next = mid_ + step;
+        if (next > mid0_ - 48 && next < mid0_ + 48) mid_ = next;
+      }
     }
   }
 
@@ -168,18 +175,30 @@ class FlowGen {
     return static_cast<Tick>(lv < a_.depth_levels ? lv : a_.depth_levels - 1);
   }
 
+  // Resting orders: 0.01 to 5 ETH, flat.
   Qty qty() { return static_cast<Qty>(1 + (rng_() % 500)) * (kQtyScale / 100); }
+
+  // Marketable orders are shaped like the measured Hyperliquid ETH-perp tape,
+  // which has a median print of 0.065 ETH and a mean of 1.34: mostly dust with
+  // a long tail. A flat distribution here would have every marketable order
+  // sweep several price levels and turn the benchmark into a fill test.
+  Qty take_qty() {
+    const double u = uniform();
+    const double eth = (u < 0.75) ? (0.01 + 0.19 * uniform())
+                                  : (-std::log(1.0 - uniform() * 0.999) * 4.0);
+    return static_cast<Qty>(eth * kQtyScale) + 1;
+  }
 
   void emit_add(Command& c, OpKind& k, bool marketable) {
     const Side side = (rng_() & 1) ? Side::Buy : Side::Sell;
-    const Qty q = qty();
     if (marketable) {
       const Tick t = side == Side::Buy ? mid_ + 1 + static_cast<Tick>(rng_() % 3)
                                        : mid_ - 1 - static_cast<Tick>(rng_() % 3);
       k = OpKind::AddMarketable;
-      c = Command{0, next_id_++, q, t, CmdType::AddLimit, side, Tif::Ioc, 0};
+      c = Command{0, next_id_++, take_qty(), t, CmdType::AddLimit, side, Tif::Ioc, 0};
       return;
     }
+    const Qty q = qty();
     const Tick off = offset();
     const Tick t = side == Side::Buy ? mid_ - 1 - off : mid_ + 1 + off;
     const OrderId id = next_id_++;
@@ -219,6 +238,7 @@ class FlowGen {
   Args a_;
   std::mt19937_64 rng_;
   Tick mid_;
+  Tick mid0_;
   OrderId next_id_ = 1;
   std::vector<LiveOrder> live_;
 };
@@ -229,12 +249,19 @@ double now_s() {
   return std::chrono::duration<double>(clock::now() - t0).count();
 }
 
-BookConfig bench_book_cfg() {
+// The pool and the id map are sized to the flow rather than to some large
+// round number. An 8 million entry id map is 128 MB, and at that size every
+// lookup is a TLB miss on top of a cache miss; the benchmark then measures the
+// page tables rather than the engine. These are sized to about four times the
+// steady state order count, which is what a venue would provision.
+BookConfig bench_book_cfg(const Args& a) {
   BookConfig c;
   c.min_tick = 1;
-  c.max_tick = 262144;
-  c.max_orders = 1u << 22;
-  c.id_map_capacity = 1u << 23;
+  c.max_tick = 65536;                  // 6553.6 USD at a 0.1 tick
+  std::size_t orders = 1024;
+  while (orders < a.max_live * 4) orders <<= 1;
+  c.max_orders = orders;
+  c.id_map_capacity = orders * 2;
   return c;
 }
 
@@ -270,7 +297,7 @@ int main(int argc, char** argv) {
   // ---- phase 1: per operation latency -------------------------------------
   {
     CountingSink sink;
-    MatchingEngine eng(bench_book_cfg(), &sink);
+    MatchingEngine eng(bench_book_cfg(a), &sink);
     FlowGen gen(a, mid);
     CycleHist hist[static_cast<int>(OpKind::Count)];
     CycleHist all;
@@ -299,16 +326,17 @@ int main(int argc, char** argv) {
 
     std::printf("per operation latency, matcher pinned%s, %.0f s of timed work\n",
                 a.core >= 0 ? "" : " (NOT PINNED)", a.seconds);
-    std::printf("%-20s %12s %9s %9s %9s %9s %9s\n", "operation", "count", "p50", "p90",
-                "p99", "p99.9", "max");
+    std::printf("%-20s %12s %9s %9s %9s %9s %9s %9s\n", "operation", "count", "p50", "p90",
+                "p99", "p99.9", "mean", "max");
     auto row = [&](const char* name, const CycleHist& h) {
       if (!h.count()) return;
-      std::printf("%-20s %12llu %8.0fns %8.0fns %8.0fns %8.0fns %8.1fus\n", name,
+      std::printf("%-20s %12llu %8.0fns %8.0fns %8.0fns %8.0fns %8.0fns %8.1fus\n", name,
                   static_cast<unsigned long long>(h.count()),
                   to_ns(h.pct_cycles(50), ghz, overhead),
                   to_ns(h.pct_cycles(90), ghz, overhead),
                   to_ns(h.pct_cycles(99), ghz, overhead),
                   to_ns(h.pct_cycles(99.9), ghz, overhead),
+                  to_ns(h.mean_cycles(), ghz, overhead),
                   to_ns(static_cast<double>(h.max_cycles()), ghz, overhead) / 1000.0);
     };
     for (int k = 0; k < static_cast<int>(OpKind::Count); ++k) row(kOpName[k], hist[k]);
@@ -349,7 +377,7 @@ int main(int argc, char** argv) {
   double single_thread_mps = 0;
   {
     CountingSink sink;
-    MatchingEngine eng(bench_book_cfg(), &sink);
+    MatchingEngine eng(bench_book_cfg(a), &sink);
     FlowGen gen(a, mid);
     for (int w = 0; w < 6; ++w) {
       gen.fill(block.data(), kinds.data(), a.block);
@@ -376,70 +404,116 @@ int main(int argc, char** argv) {
                 static_cast<unsigned long long>(sink.trades));
   }
 
-  // ---- phase 3: feed thread -> ring -> matcher ------------------------------
+  // ---- phase 3: feed thread -> ring -> matcher, saturated -------------------
+  // Bulk push and pop, and no timers inside the loop. This is the throughput
+  // the pipeline sustains when the feed is always ahead of the matcher.
+  double pipeline_mps = 0;
   {
     CommandRing ring(1u << 16);
     std::atomic<bool> stop{false};
-    std::atomic<std::uint64_t> produced{0};
     CountingSink sink;
-    MatchingEngine eng(bench_book_cfg(), &sink);
+    MatchingEngine eng(bench_book_cfg(a), &sink);
 
-    const double seconds = a.seconds;
     std::thread feed([&] {
       if (a.feed_core >= 0) pin_to_core(a.feed_core);
       FlowGen gen(a, mid);
-      std::vector<Command> b(65536);
-      std::vector<OpKind> k(65536);
-      std::uint64_t n = 0;
+      std::vector<Command> b(4096);
+      std::vector<OpKind> k(4096);
       while (!stop.load(std::memory_order_relaxed)) {
         gen.fill(b.data(), k.data(), b.size());
-        for (std::size_t i = 0; i < b.size(); ++i) {
-          b[i].ts = static_cast<Ts>(rdtsc_begin());
-          while (!ring.push(b[i])) {
-            if (stop.load(std::memory_order_relaxed)) { produced.store(n); return; }
-          }
-          ++n;
+        std::size_t off = 0;
+        while (off < b.size()) {
+          off += ring.push_bulk(b.data() + off, b.size() - off);
+          if (stop.load(std::memory_order_relaxed)) return;
         }
       }
-      produced.store(n);
     });
 
-    CycleHist transit;
+    std::vector<Command> batch(4096);
+    // Warm up before the clock starts.
+    std::uint64_t warm = 0;
+    while (warm < 4u << 20) {
+      const std::size_t n = ring.pop_bulk(batch.data(), batch.size());
+      for (std::size_t i = 0; i < n; ++i) eng.apply(batch[i]);
+      warm += n;
+    }
     std::uint64_t consumed = 0;
     const double t0 = now_s();
-    Command c{};
-    while (now_s() - t0 < seconds) {
-      for (int i = 0; i < 4096; ++i) {
-        if (ring.pop(c)) {
-          const std::uint64_t arrive = rdtsc_end();
-          transit.add(arrive - static_cast<std::uint64_t>(c.ts));
-          c.ts = 0;
-          eng.apply(c);
-          ++consumed;
-        }
+    while (now_s() - t0 < a.seconds) {
+      for (int r = 0; r < 64; ++r) {
+        const std::size_t n = ring.pop_bulk(batch.data(), batch.size());
+        for (std::size_t i = 0; i < n; ++i) eng.apply(batch[i]);
+        consumed += n;
       }
     }
     const double elapsed = now_s() - t0;
     stop.store(true);
-    while (ring.pop(c)) {
+    while (ring.pop_bulk(batch.data(), batch.size())) {
     }
     feed.join();
-
-    std::printf("feed thread -> spsc ring -> matcher%s\n",
+    pipeline_mps = consumed / elapsed / 1e6;
+    std::printf("feed thread -> spsc ring -> matcher, saturated%s\n",
                 (a.core >= 0 && a.feed_core >= 0) ? ", both pinned" : " (NOT PINNED)");
-    std::printf("  end to end: %.2f M msg/s over %.1f s (%llu messages)\n",
-                consumed / elapsed / 1e6, elapsed,
-                static_cast<unsigned long long>(consumed));
-    std::printf("  ring transit: p50 %.0f ns  p99 %.0f ns  p99.9 %.0f ns  max %.1f us\n",
+    std::printf("  end to end: %.2f M msg/s over %.1f s (%llu messages, bulk push and pop)\n\n",
+                pipeline_mps, elapsed, static_cast<unsigned long long>(consumed));
+  }
+
+  // ---- phase 4: unloaded queue handoff --------------------------------------
+  // The saturated number above says nothing about how long a message takes to
+  // cross the queue, because a full ring means every message waits behind 65535
+  // others. Here the producer only sends when the ring is empty, so the reading
+  // is the handoff itself: a release store on one core, an acquire load on
+  // another, and the cache line moving between them.
+  {
+    CommandRing ring(1024);
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint64_t> sent{0};
+    CycleHist transit;
+
+    std::thread consumer([&] {
+      if (a.feed_core >= 0) pin_to_core(a.feed_core);
+      Command c{};
+      while (!stop.load(std::memory_order_relaxed)) {
+        if (ring.pop(c)) {
+          const std::uint64_t arrive = rdtsc_end();
+          transit.add(arrive - static_cast<std::uint64_t>(c.ts));
+        }
+      }
+    });
+
+    const double t0 = now_s();
+    const double budget = a.seconds < 5.0 ? a.seconds : 5.0;
+    std::uint64_t n = 0;
+    while (now_s() - t0 < budget) {
+      for (int i = 0; i < 1000; ++i) {
+        Command c{};
+        c.type = CmdType::Nop;
+        c.ts = static_cast<Ts>(rdtsc_begin());
+        while (!ring.push(c)) {
+        }
+        ++n;
+        // Wait for the consumer to take it, so the next message is never queued
+        // behind this one.
+        while (!ring.empty_approx()) {
+        }
+      }
+    }
+    stop.store(true);
+    consumer.join();
+    sent.store(n);
+    std::printf("spsc handoff latency, unloaded (producer waits for the ring to drain)\n");
+    std::printf("  %llu samples: p50 %.0f ns  p99 %.0f ns  p99.9 %.0f ns  max %.1f us\n",
+                static_cast<unsigned long long>(transit.count()),
                 to_ns(transit.pct_cycles(50), ghz, overhead),
                 to_ns(transit.pct_cycles(99), ghz, overhead),
                 to_ns(transit.pct_cycles(99.9), ghz, overhead),
                 to_ns(static_cast<double>(transit.max_cycles()), ghz, overhead) / 1000.0);
-    std::printf("  (transit includes the queue wait, so it tracks how far the feed runs\n"
-                "   ahead of the matcher, not just the handoff cost)\n");
     if (a.csv) {
       std::printf("csv,throughput,single_thread_mps,%.4f\n", single_thread_mps);
-      std::printf("csv,throughput,pipeline_mps,%.4f\n", consumed / elapsed / 1e6);
+      std::printf("csv,throughput,pipeline_mps,%.4f\n", pipeline_mps);
+      std::printf("csv,handoff,p50_ns,%.1f\n", to_ns(transit.pct_cycles(50), ghz, overhead));
+      std::printf("csv,handoff,p99_ns,%.1f\n", to_ns(transit.pct_cycles(99), ghz, overhead));
+      std::printf("csv,handoff,p999_ns,%.1f\n", to_ns(transit.pct_cycles(99.9), ghz, overhead));
     }
   }
   return 0;

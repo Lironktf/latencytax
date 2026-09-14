@@ -1,0 +1,29 @@
+host: 4 cpus, tsc 2.4000 GHz (measured against CLOCK_MONOTONIC)
+timer pair cost: p50 36 cycles (15.0 ns), subtracted from the latency table
+
+per operation latency, matcher pinned, 30 s of timed work
+operation                   count       p50       p90       p99     p99.9       max
+add (rests)              30304131      170ns      385ns      808ns    15508ns   3412.1us
+add (marketable)          3565013      198ns      491ns      966ns    16043ns   1930.4us
+cancel                   30304181      179ns      360ns      646ns    14988ns   2807.9us
+modify                    7129843      181ns      415ns      733ns    15625ns   1797.9us
+all                      71303168      175ns      383ns      745ns    15476ns   3412.1us
+book at end: 95684 resting orders (generator target 200000), best bid 18647 best ask 18648
+events: 21713536 trades, 26161728 accepts, 18405313 cancels, 23372696 rejects
+
+csv,phase,op,count,p50_ns,p90_ns,p99_ns,p999_ns,max_ns
+csv,latency,add (rests),30304131,170.0,385.0,807.5,15507.7,3412137.1
+csv,latency,add (marketable),3565013,197.5,491.3,966.3,16042.7,1930397.2
+csv,latency,cancel,30304181,178.8,360.0,646.3,14987.7,2807863.9
+csv,latency,modify,7129843,181.3,415.0,732.5,15625.2,1797906.6
+csv,latency,all,71303168,175.0,382.5,745.0,15476.5,3412137.1
+single thread throughput: 5.47 M msg/s (182.9 ns/msg), 164626432 messages in 30.1 s
+  resting orders at end: 52148, trades: 47981369
+
+feed thread -> spsc ring -> matcher, both pinned
+  end to end: 1.99 M msg/s over 30.0 s (59706418 messages)
+  ring transit: p50 55924789 ns  p99 55924789 ns  p99.9 111849593 ns  max 88271.0 us
+  (transit includes the queue wait, so it tracks how far the feed runs
+   ahead of the matcher, not just the handoff cost)
+csv,throughput,single_thread_mps,5.4670
+csv,throughput,pipeline_mps,1.9902

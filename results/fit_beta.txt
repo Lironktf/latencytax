@@ -1,0 +1,5 @@
+order flow regression over 4 days, 69117 snapshot pairs
+  next interval mid change = beta * decayed signed volume
+  beta = 0.00008052 USD per ETH
+  correlation = 0.01816, r2 = 0.000330
+  ofi half life 60 s
