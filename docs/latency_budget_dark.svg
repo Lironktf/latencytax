@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="498" viewBox="0 0 900 498" role="img" aria-label="Tick to trade latency budget by transport">
+<style>
+    text { font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, sans-serif; }
+    .h1 { font-size: 19px; font-weight: 640; fill: #ffffff; }
+    .h2 { font-size: 13.5px; font-weight: 600; fill: #ffffff; }
+    .cap { font-size: 11.5px; fill: #8f8e86; }
+    .lab { font-size: 12px; fill: #c3c2b7; }
+    .ax  { font-size: 10.5px; fill: #8f8e86; }
+    .leg { font-size: 11.5px; fill: #c3c2b7; }
+    .tot { font-size: 12.5px; font-weight: 640; fill: #ffffff; }
+    .seg { font-size: 10.5px; fill: #1a1a19; font-weight: 600; }
+    .grid { stroke: #343432; stroke-width: 1; }
+    </style>
+<rect width="900" height="498" fill="#1a1a19"/>
+<text x="40" y="36" class="h1">Tick to trade: where the time goes</text>
+<text x="40" y="55" class="cap">the engine is 4% of a UDP loopback path and 34% of one with no kernel in it</text>
+<text x="40" y="74" class="h2">the whole path</text>
+<text x="40" y="89" class="cap">median nanoseconds, one packet in and the order it provoked out</text>
+<line x1="216.0" y1="106" x2="216.0" y2="286.0" class="grid"/>
+<text x="216.0" y="300.0" class="ax" text-anchor="middle">0</text>
+<line x1="309.0" y1="106" x2="309.0" y2="286.0" class="grid"/>
+<text x="309.0" y="300.0" class="ax" text-anchor="middle">2.0 µs</text>
+<line x1="402.0" y1="106" x2="402.0" y2="286.0" class="grid"/>
+<text x="402.0" y="300.0" class="ax" text-anchor="middle">4.0 µs</text>
+<line x1="495.0" y1="106" x2="495.0" y2="286.0" class="grid"/>
+<text x="495.0" y="300.0" class="ax" text-anchor="middle">6.0 µs</text>
+<line x1="588.0" y1="106" x2="588.0" y2="286.0" class="grid"/>
+<text x="588.0" y="300.0" class="ax" text-anchor="middle">8.0 µs</text>
+<line x1="681.0" y1="106" x2="681.0" y2="286.0" class="grid"/>
+<text x="681.0" y="300.0" class="ax" text-anchor="middle">10.0 µs</text>
+<line x1="774.0" y1="106" x2="774.0" y2="286.0" class="grid"/>
+<text x="774.0" y="300.0" class="ax" text-anchor="middle">12.0 µs</text>
+<text x="206" y="125.0" class="lab" text-anchor="end">UDP loopback</text>
+<g fill="#3987e5"><title>kernel in: 5281 ns</title><rect x="216.0" y="106.0" width="245.6" height="30.0"/></g>
+<text x="338.8" y="125.0" class="seg" text-anchor="middle">5.3 µs</text>
+<g fill="#d95926"><title>engine: 424 ns</title><rect x="463.6" y="106.0" width="19.7" height="30.0"/></g>
+<g fill="#199e70"><title>kernel out: 4915 ns</title><rect x="485.3" y="106.0" width="228.5" height="30.0"/></g>
+<text x="599.6" y="125.0" class="seg" text-anchor="middle">4.9 µs</text>
+<g fill="#c98500"><title>reply in flight: 466 ns</title><path d="M715.8,106.0 H733.5 A4.0,4.0 0 0 1 737.5,110.0 V132.0 A4.0,4.0 0 0 1 733.5,136.0 H715.8 Z"/></g>
+<text x="784.0" y="125.0" class="tot">11.1 µs</text>
+<text x="206" y="169.0" class="lab" text-anchor="end">UDP, connected + recvmmsg</text>
+<g fill="#3987e5"><title>kernel in: 5005 ns</title><rect x="216.0" y="150.0" width="232.7" height="30.0"/></g>
+<text x="332.4" y="169.0" class="seg" text-anchor="middle">5.0 µs</text>
+<g fill="#d95926"><title>engine: 375 ns</title><rect x="450.7" y="150.0" width="17.4" height="30.0"/></g>
+<g fill="#199e70"><title>kernel out: 4440 ns</title><rect x="470.2" y="150.0" width="206.5" height="30.0"/></g>
+<text x="573.4" y="169.0" class="seg" text-anchor="middle">4.4 µs</text>
+<g fill="#c98500"><title>reply in flight: 565 ns</title><path d="M678.6,150.0 H700.9 A4.0,4.0 0 0 1 704.9,154.0 V176.0 A4.0,4.0 0 0 1 700.9,180.0 H678.6 Z"/></g>
+<text x="784.0" y="169.0" class="tot">10.4 µs</text>
+<text x="206" y="213.0" class="lab" text-anchor="end">AF_UNIX datagrams</text>
+<g fill="#3987e5"><title>kernel in: 2659 ns</title><rect x="216.0" y="194.0" width="123.6" height="30.0"/></g>
+<text x="277.8" y="213.0" class="seg" text-anchor="middle">2.7 µs</text>
+<g fill="#d95926"><title>engine: 341 ns</title><rect x="341.6" y="194.0" width="15.9" height="30.0"/></g>
+<g fill="#199e70"><title>kernel out: 1468 ns</title><rect x="359.5" y="194.0" width="68.3" height="30.0"/></g>
+<text x="393.6" y="213.0" class="seg" text-anchor="middle">1.5 µs</text>
+<g fill="#c98500"><title>reply in flight: 1097 ns</title><path d="M429.8,194.0 H476.8 A4.0,4.0 0 0 1 480.8,198.0 V220.0 A4.0,4.0 0 0 1 476.8,224.0 H429.8 Z"/></g>
+<text x="784.0" y="213.0" class="tot">5.6 µs</text>
+<text x="206" y="257.0" class="lab" text-anchor="end">SPSC ring, no kernel</text>
+<g fill="#3987e5"><title>kernel in: 353 ns</title><rect x="216.0" y="238.0" width="16.4" height="30.0"/></g>
+<g fill="#d95926"><title>engine: 363 ns</title><rect x="234.4" y="238.0" width="16.9" height="30.0"/></g>
+<g fill="#199e70"><title>kernel out: 51 ns</title><rect x="253.3" y="238.0" width="2.4" height="30.0"/></g>
+<g fill="#c98500"><title>reply in flight: 289 ns</title><path d="M257.7,238.0 H267.1 A4.0,4.0 0 0 1 271.1,242.0 V264.0 A4.0,4.0 0 0 1 267.1,268.0 H257.7 Z"/></g>
+<text x="784.0" y="257.0" class="tot">1.1 µs</text>
+<text x="40" y="342" class="h2">the same bottom row, to scale</text>
+<text x="40" y="357" class="cap">the kernel is gone, so the engine is a third of what is left</text>
+<line x1="216.0" y1="374" x2="216.0" y2="422.0" class="grid"/>
+<text x="216.0" y="436.0" class="ax" text-anchor="middle">0</text>
+<line x1="309.0" y1="374" x2="309.0" y2="422.0" class="grid"/>
+<text x="309.0" y="436.0" class="ax" text-anchor="middle">200 ns</text>
+<line x1="402.0" y1="374" x2="402.0" y2="422.0" class="grid"/>
+<text x="402.0" y="436.0" class="ax" text-anchor="middle">400 ns</text>
+<line x1="495.0" y1="374" x2="495.0" y2="422.0" class="grid"/>
+<text x="495.0" y="436.0" class="ax" text-anchor="middle">600 ns</text>
+<line x1="588.0" y1="374" x2="588.0" y2="422.0" class="grid"/>
+<text x="588.0" y="436.0" class="ax" text-anchor="middle">800 ns</text>
+<line x1="681.0" y1="374" x2="681.0" y2="422.0" class="grid"/>
+<text x="681.0" y="436.0" class="ax" text-anchor="middle">1.0 µs</text>
+<line x1="774.0" y1="374" x2="774.0" y2="422.0" class="grid"/>
+<text x="774.0" y="436.0" class="ax" text-anchor="middle">1.2 µs</text>
+<text x="206" y="393.0" class="lab" text-anchor="end">SPSC ring, no kernel</text>
+<g fill="#3987e5"><title>kernel in: 353 ns</title><rect x="216.0" y="374.0" width="164.1" height="30.0"/></g>
+<text x="298.1" y="393.0" class="seg" text-anchor="middle">353 ns</text>
+<g fill="#d95926"><title>engine: 363 ns</title><rect x="382.1" y="374.0" width="168.8" height="30.0"/></g>
+<text x="466.5" y="393.0" class="seg" text-anchor="middle">363 ns</text>
+<g fill="#199e70"><title>kernel out: 51 ns</title><rect x="552.9" y="374.0" width="23.7" height="30.0"/></g>
+<g fill="#c98500"><title>reply in flight: 289 ns</title><path d="M578.7,374.0 H709.0 A4.0,4.0 0 0 1 713.0,378.0 V400.0 A4.0,4.0 0 0 1 709.0,404.0 H578.7 Z"/></g>
+<text x="645.8" y="393.0" class="seg" text-anchor="middle">289 ns</text>
+<text x="784.0" y="393.0" class="tot">1.1 µs</text>
+<rect x="216" y="455" width="11" height="11" rx="2.5" fill="#3987e5"/>
+<text x="233" y="464" class="leg">kernel in</text>
+<rect x="327.0" y="455" width="11" height="11" rx="2.5" fill="#d95926"/>
+<text x="344.0" y="464" class="leg">engine</text>
+<rect x="414.0" y="455" width="11" height="11" rx="2.5" fill="#199e70"/>
+<text x="431.0" y="464" class="leg">kernel out</text>
+<rect x="533.0" y="455" width="11" height="11" rx="2.5" fill="#c98500"/>
+<text x="550.0" y="464" class="leg">reply in flight</text>
+</svg>

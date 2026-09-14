@@ -1,18 +1,18 @@
-tick to trade, udp on loopback, feed pinned to cpu 3 and engine to cpu 2
-tsc 2.4000 GHz, timer pair 33 cycles subtracted, 286255 packets sent, 286255 round trips measured (100.00% seen)
+tick to trade, feed on cpu 3 and engine on cpu 2, tsc 2.4000 GHz, timer pair 30 cycles subtracted
 
-  stage
-  kernel in, send to recv    p50     6059 ns   p99     54600 ns   p99.9    218442 ns   max  7042.9 us
-  decode the packet          p50       69 ns   p99       414 ns   p99.9      1030 ns   max   129.9 us
-  apply to the book          p50      310 ns   p99       881 ns   p99.9     15969 ns   max   468.2 us
-  look at the book, decide   p50        9 ns   p99        28 ns   p99.9       101 ns   max    62.7 us
-  kernel out, sendto         p50     5574 ns   p99     27227 ns   p99.9    109214 ns   max  4312.7 us
-  return leg (incl. sendto)  p50     5866 ns   p99     26969 ns   p99.9    109214 ns   max  4312.3 us
 
-  engine work, t1 to t5      p50      434 ns   p99      1264 ns   p99.9     16858 ns   max   468.4 us
-  tick to trade, t0 to t6    p50    13346 ns   p99     54600 ns   p99.9    436899 ns   max  7100.8 us
+the ladder, medians in nanoseconds
+transport                                           in    decode      book    decide       out    engine     TOTAL
+udp on loopback                                   5281        70       294        10      4915       424     11086
+udp on loopback, connected sockets, recvmmsg      5005        75       239        10      4440       375     10385
+af_unix datagrams                                 2659        68       215        10      1468       341      5565
+spsc ring, no kernel in the path                   353        80       213        10        51       363      1056
 
-  at the median, the part this repository wrote is 3.2% of the whole path (434 ns of 13346 ns)
-  the rest is the kernel network stack, twice. there is no NIC here and no
-  kernel bypass, so this is a floor on a real path rather than an estimate
-  of one.
+                                                   p50       p99     p99.9
+udp on loopback                                  11086     54602    218444   engine is 3.8% of it
+udp on loopback, connected sockets, recvmmsg     10385     54602    218444   engine is 3.6% of it
+af_unix datagrams                                 5565     54602    109216   engine is 6.1% of it
+spsc ring, no kernel in the path                  1056     18200    109216   engine is 34.3% of it
+
+none of this is a network. no NIC, no wire, no bypass stack. the ring row
+is not a bypass NIC either: it is the floor one is trying to reach.

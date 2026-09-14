@@ -459,7 +459,32 @@ that "kernel bypass would help" stops being a claim and becomes a number.
 ./build/ticktotrade --all --seconds=20 --feed-core=3 --engine-core=2
 ```
 
-Medians, nanoseconds:
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/latency_budget_dark.svg">
+  <img alt="Stacked bars of the tick to trade budget for four transports. UDP on loopback totals 11.1 microseconds, of which the kernel receive path is 5.3, the engine 0.4 and the kernel send path 4.9. AF_UNIX totals 5.6 and the SPSC ring 1.1 microseconds. A second panel shows the ring row to scale: 353 nanoseconds in, 363 in the engine, 51 out and 289 in flight." src="docs/latency_budget.svg" width="900">
+</picture>
+
+Regenerated from the measurement rather than drawn, so it cannot drift:
+
+```
+./build/ticktotrade --all --seconds=20 --quiet > results/ticktotrade.txt
+python3 scripts/latency_svg.py
+```
+
+The same numbers as a table, since a picture is not a data source:
+
+| transport | kernel in | engine | kernel out | in flight | total |
+|---|---|---|---|---|---|
+| UDP loopback | 5,281 | 424 | 4,915 | 466 | 11,086 |
+| UDP, connected + recvmmsg | 5,005 | 375 | 4,440 | 565 | 10,385 |
+| AF_UNIX datagrams | 2,659 | 341 | 1,468 | 1,097 | 5,565 |
+| SPSC ring, no kernel | 353 | 363 | 51 | 289 | 1,056 |
+
+The stages are measured separately and the total end to end, so the gap between
+them is the part of the return leg after the send call returns. It is shown as
+its own segment rather than absorbed into a neighbour.
+
+And the full breakdown, medians in nanoseconds, from a separate 20 second run:
 
 | transport | in | decode | book | decide | out | engine | **total** |
 |---|---|---|---|---|---|---|---|
