@@ -22,13 +22,13 @@ never reads engine state, so this is a check on the engine rather than a
 tautology.
 
 **The engine's speed depends on the size of the book, and the numbers say by how
-much.** With 2,000 resting orders it runs at 17.13 million messages per second
-with a median operation of 46 ns and a p99.9 of 495 ns. With 200,000 resting
-orders the same code runs at 4.05 million messages per second with a median of
-205 ns and a p99.9 of 15.7 us. Nothing about the algorithm changed between those
+much.** With 2,000 resting orders it runs at 16.71 million messages per second
+with a median operation of 48 ns and a p99.9 of 464 ns. With 200,000 resting
+orders the same code runs at 4.11 million messages per second with a median of
+205 ns and a p99.9 of 13.7 us. Nothing about the algorithm changed between those
 two rows. The working set went from fitting in cache to not fitting, and a cancel
-went from costing the same as an add to costing 1.6 times as much, because a
-cancel begins with a hash lookup that has become a guaranteed miss.
+went from costing slightly less than an add to costing 1.6 times as much, because
+a cancel begins with a hash lookup that has become a guaranteed miss.
 
 **Reaction latency below about 33 milliseconds is worth exactly nothing on this
 venue, and that is measurable rather than a manner of speaking.** The latency tax
@@ -236,25 +236,30 @@ Four steady state book sizes, identical code and identical synthetic flow, 30
 seconds of timed work per phase, matcher pinned to one core and the feed thread
 to another. The "all operations" row pools adds, cancels and modifies.
 
-| resting orders | p50 | p90 | p99 | p99.9 | mean | throughput | through the ring | queue handoff p50 |
-|---|---|---|---|---|---|---|---|---|
-| 2,000 | 46 ns | 85 ns | 204 ns | 495 ns | 65 ns | 17.13 M msg/s | 16.38 M msg/s | 154 ns |
-| 20,000 | 104 ns | 199 ns | 446 ns | 2,319 ns | 136 ns | 8.75 M msg/s | 9.13 M msg/s | 136 ns |
-| 60,000 | 161 ns | 311 ns | 580 ns | 12,636 ns | 207 ns | 6.32 M msg/s | 5.69 M msg/s | 135 ns |
-| 200,000 | 205 ns | 393 ns | 696 ns | 15,740 ns | 270 ns | 4.05 M msg/s | 3.43 M msg/s | 314 ns |
+| resting orders | p50 | p90 | p99 | p99.9 | mean | throughput | through the ring |
+|---|---|---|---|---|---|---|---|
+| 2,000 | 48 ns | 85 ns | 206 ns | 464 ns | 64 ns | 16.71 M msg/s | 15.52 M msg/s |
+| 20,000 | 101 ns | 171 ns | 409 ns | 1,494 ns | 120 ns | 10.37 M msg/s | 9.58 M msg/s |
+| 60,000 | 148 ns | 276 ns | 543 ns | 6,174 ns | 189 ns | 6.11 M msg/s | 5.87 M msg/s |
+| 200,000 | 205 ns | 376 ns | 685 ns | 13,749 ns | 261 ns | 4.11 M msg/s | 4.02 M msg/s |
+
+The unloaded queue handoff does not depend on the book, and was measured once
+per row: p50 238, 139, 135 and 140 ns, p99 750, 189, 188 and 188 ns. The first is
+the cold one; take the number as roughly 140 ns with a first-touch outlier
+reported rather than dropped.
 
 Per operation, at the two ends of that range:
 
 | book | operation | p50 | p90 | p99 | p99.9 |
 |---|---|---|---|---|---|
-| 2,000 | add that rests | 46 ns | 81 ns | 191 ns | 480 ns |
-| 2,000 | add that trades | 46 ns | 130 ns | 315 ns | 673 ns |
-| 2,000 | cancel | 48 ns | 76 ns | 184 ns | 466 ns |
-| 2,000 | modify | 48 ns | 120 ns | 231 ns | 528 ns |
-| 200,000 | add that rests | 165 ns | 279 ns | 581 ns | 13,038 ns |
-| 200,000 | add that trades | 170 ns | 425 ns | 1,178 ns | 15,733 ns |
-| 200,000 | cancel | 263 ns | 415 ns | 690 ns | 15,990 ns |
-| 200,000 | modify | 256 ns | 484 ns | 784 ns | 16,138 ns |
+| 2,000 | add that rests | 50 ns | 83 ns | 195 ns | 454 ns |
+| 2,000 | add that trades | 49 ns | 128 ns | 305 ns | 621 ns |
+| 2,000 | cancel | 45 ns | 74 ns | 184 ns | 426 ns |
+| 2,000 | modify | 44 ns | 128 ns | 215 ns | 479 ns |
+| 200,000 | add that rests | 159 ns | 275 ns | 580 ns | 11,521 ns |
+| 200,000 | add that trades | 156 ns | 419 ns | 1,161 ns | 14,171 ns |
+| 200,000 | cancel | 261 ns | 389 ns | 674 ns | 15,599 ns |
+| 200,000 | modify | 244 ns | 470 ns | 781 ns | 15,806 ns |
 
 The interesting part of that table is not the top row, it is the shape of the
 change. In the small book all four operations cost the same, because everything
@@ -277,8 +282,8 @@ grow with the sample count.
 The throughput column is a separate phase with no timers in the loop at all:
 commands are generated into a block first, then the block is applied under one
 wall clock reading. It is the honest cost per message, and it agrees with the
-mean column to within the serialisation overhead (58 against 65 ns, 114 against
-136, 158 against 207, 247 against 270), which is the cross-check that the timed
+mean column to within the serialisation overhead (60 against 64 ns, 97 against
+120, 164 against 189, 243 against 261), which is the cross-check that the timed
 numbers are not measuring the timer.
 
 The pipeline column runs the feed on one pinned core and the matcher on another
@@ -288,9 +293,14 @@ reading is the handoff itself rather than the queue wait. A saturated ring makes
 the transit time a function of queue depth and says nothing about the handoff,
 which is why the two are not the same measurement.
 
+A command on the wire between the feed thread and the matcher is 40 bytes: a
+timestamp, two order references, a quantity, a price and three enums, with no
+padding wasted. The second reference exists for one message, ITCH Order Replace,
+which names both the reference it retires and the one that takes its place.
+
 **Caveats on these numbers.** This is a shared four vCPU cloud VM with a Haswell
 class host, a measured TSC of 2.4000 GHz, and no huge pages. CPU steal over the
-seven minute run was 128 ticks, about 0.3%. The medians and the throughput
+seven minute run was 93 ticks, about 0.2%. The medians and the throughput
 figures reproduce across runs; the maxima, which run to milliseconds, are
 scheduler noise and are reported rather than trimmed. Running anything else on
 the machine at the same time changes these numbers by a factor of several, which
