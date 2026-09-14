@@ -1,0 +1,8 @@
+== fuzz_itch, 200s ==
+stat::average_exec_per_sec:     419
+stat::new_units_added:          1464
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              419
+  no crashes
+
+== fuzz_soup, 200s ==

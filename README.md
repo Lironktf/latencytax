@@ -116,6 +116,16 @@ cmake -B build-tsan -DCMAKE_BUILD_TYPE=TSan && cmake --build build-tsan -j
 ./build-tsan/test_spsc
 ```
 
+### A note for anyone reading this who is not me
+
+The two raw datasets are collected live into a private bucket and are not public,
+so the replay, the experiment and the queue model cannot be re-run without them.
+Everything that does not need market data does run from a clean clone: the whole
+test suite, the engine benchmark, the ITCH and OUCH tools against synthetic flow,
+the tick to trade ladder, the kernel benchmarks and the fuzzers. Every number
+quoted here has the command that produced it next to it, and the raw output of
+those commands is committed under `results/`.
+
 ### Getting the data
 
 The two raw datasets live in a private Backblaze B2 bucket behind the

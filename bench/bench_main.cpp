@@ -37,6 +37,8 @@
 
 #include "engine/engine.hpp"
 #include "ml/kernels.hpp"
+#include "wire/itch_fixed.hpp"
+#include "wire/decoder.hpp"
 #include "ml/logistic.hpp"
 #include "ml/mlp.hpp"
 #include "util/affinity.hpp"
@@ -62,6 +64,7 @@ struct Args {
   bool csv = false;
   bool kernels = false;
   int hugepages = 1;
+  bool decode = false;
 };
 
 void usage() {
@@ -80,6 +83,7 @@ void usage() {
       "  --csv              also print the table as csv\n"
       "  --kernels          benchmark the ml kernels instead of the engine\n"
       "  --hugepages=0|1    ask for 2 MB pages for the book arrays, default 1\n"
+      "  --decode           compare the branching and fixed latency ITCH decoders\n"
       "  --help\n");
 }
 
@@ -101,6 +105,7 @@ bool parse_args(int argc, char** argv, Args& a) {
     else if (num("--seed=", d)) a.seed = static_cast<std::uint64_t>(d);
     else if (s == "--csv") a.csv = true;
     else if (s == "--kernels") a.kernels = true;
+    else if (s == "--decode") a.decode = true;
     else if (num("--hugepages=", d)) a.hugepages = static_cast<int>(d);
     else if (s.rfind("--mix=", 0) == 0) {
       if (std::sscanf(s.c_str() + 6, "%lf,%lf,%lf,%lf", &a.pct_add, &a.pct_cancel,
@@ -322,6 +327,154 @@ int main(int argc, char** argv) {
   std::printf("book arrays: %s\n\n",
               a.hugepages ? "2 MB pages requested with madvise"
                           : "4 KB pages, huge pages explicitly refused");
+
+  if (a.decode) {
+    // Two decoders over the same messages. The branching one switches on the
+    // type and reads different offsets in each arm; the fixed one turns the
+    // type into a table lookup so it selects an address rather than a branch,
+    // and masks the fields a message does not have. The question is not which
+    // is faster on average, it is which has a latency that depends on what
+    // arrived.
+    using namespace ltx::wire;
+    std::mt19937_64 rng(a.seed);
+    // A padded buffer, because the fixed decoder issues loads for fields a
+    // message may not have. Real handlers read into an oversized buffer for the
+    // same reason.
+    std::vector<std::uint8_t> buf(1u << 22, 0);
+    struct Msg { std::uint32_t off; std::uint8_t len; };
+    std::vector<Msg> msgs;
+    msgs.reserve(200000);
+
+    auto emit = [&](std::size_t off, char type, std::uint64_t seq) -> std::size_t {
+      std::uint8_t* m = buf.data() + off;
+      switch (type) {
+        case 'A':
+          return encode_add(m, 1, 0, seq, seq + 1, (seq & 1) ? 'B' : 'S', 10000, "ETH     ",
+                            tick_to_wire_price(static_cast<Tick>(19000 + seq % 200), 1));
+        case 'E': return encode_executed(m, 1, 0, seq, seq + 1, 500, seq);
+        case 'X': return encode_cancel(m, 1, 0, seq, seq + 1, 250);
+        case 'D': return encode_delete(m, 1, 0, seq, seq + 1);
+        default:
+          return encode_replace(m, 1, 0, seq, seq + 1, seq + 2, 9000,
+                                tick_to_wire_price(static_cast<Tick>(19000 + seq % 200), 1));
+      }
+    };
+
+    // Two orderings. The first resembles a real feed, where messages of a type
+    // arrive in runs. The second shuffles the types, which is the case a branch
+    // predictor cannot learn.
+    auto build = [&](bool clustered) {
+      msgs.clear();
+      std::size_t off = 0;
+      const char types[5] = {'A', 'E', 'X', 'D', 'U'};
+      for (std::uint64_t i = 0; i < 120000 && off + 64 < buf.size(); ++i) {
+        const char t = clustered ? types[(i / 64) % 5] : types[rng() % 5];
+        const std::size_t n = emit(off, t, i);
+        msgs.push_back(Msg{static_cast<std::uint32_t>(off), static_cast<std::uint8_t>(n)});
+        off += n;
+      }
+    };
+
+    auto time_decoder = [&](const char* name, bool fixed, CycleHist& h) {
+      Command c{};
+      std::uint64_t produced = 0;
+      // Warm up, then measure.
+      for (int pass = 0; pass < 6; ++pass) {
+        for (const Msg& m : msgs) {
+          const std::uint8_t* p = buf.data() + m.off;
+          if (fixed) {
+            produced += decode_fixed(p, m.len, 1, c);
+          } else {
+            Decoder d;
+            std::vector<Routed> out;
+            (void)d;
+            (void)out;
+            produced += 1;
+          }
+        }
+      }
+      (void)name;
+      (void)h;
+      return produced;
+    };
+    (void)time_decoder;
+
+    Decoder branchy;
+    std::vector<Routed> sink_out;
+    sink_out.reserve(8);
+    // The branching decoder's public entry point takes a whole packet, so for a
+    // like for like comparison it is driven one message at a time through a
+    // single message packet built once and rewritten in place.
+    std::vector<std::uint8_t> pkt(1u << 10, 0);
+    std::memcpy(pkt.data(), "LTXBENCH  ", kSessionLen);
+    store_be<std::uint16_t>(pkt.data() + kSessionLen + 8, 1);
+    {
+      // The decoder needs a directory before it will emit anything.
+      std::uint8_t dir[64];
+      const std::size_t dn = encode_symbol_directory(dir, 1, 0, "ETH     ", 1, 4);
+      store_be<std::uint64_t>(pkt.data() + kSessionLen, 1);
+      store_be<std::uint16_t>(pkt.data() + kMoldHeaderLen, static_cast<std::uint16_t>(dn));
+      std::memcpy(pkt.data() + kMoldHeaderLen + 2, dir, dn);
+      sink_out.clear();
+      branchy.decode_packet(pkt.data(), kMoldHeaderLen + 2 + dn, sink_out);
+    }
+
+    std::printf("ITCH decode, branching against fixed latency\n");
+    std::printf("%-30s %8s %8s %8s %9s %9s %10s\n", "decoder and message order", "p50",
+                "p90", "p99", "p99.9", "spread", "M msg/s");
+
+    for (int order = 0; order < 2; ++order) {
+      const bool clustered = order == 0;
+      build(clustered);
+      const char* label = clustered ? "clustered" : "shuffled";
+
+      for (int which = 0; which < 2; ++which) {
+        const bool fixed = which == 1;
+        CycleHist h;
+        Command c{};
+        std::uint64_t produced = 0;
+        double timed = 0;
+        for (int pass = 0; pass < 12; ++pass) {
+          const bool measure = pass >= 4;
+          const double t0 = now_s();
+          for (const Msg& m : msgs) {
+            const std::uint8_t* p = buf.data() + m.off;
+            if (fixed) {
+              const std::uint64_t s0 = rdtsc_begin();
+              produced += decode_fixed(p, m.len, 1, c);
+              const std::uint64_t s1 = rdtsc_end();
+              if (measure) h.add(s1 - s0);
+            } else {
+              std::memcpy(pkt.data() + kMoldHeaderLen + 2, p, m.len);
+              store_be<std::uint16_t>(pkt.data() + kMoldHeaderLen,
+                                      static_cast<std::uint16_t>(m.len));
+              sink_out.clear();
+              const std::uint64_t s0 = rdtsc_begin();
+              branchy.decode_packet(pkt.data(), kMoldHeaderLen + 2 + m.len, sink_out);
+              const std::uint64_t s1 = rdtsc_end();
+              if (measure) h.add(s1 - s0);
+              produced += sink_out.size();
+            }
+          }
+          if (measure) timed += now_s() - t0;
+        }
+        char name[64];
+        std::snprintf(name, sizeof(name), "%s, %s", fixed ? "fixed" : "branching", label);
+        const double p50 = to_ns(h.pct_cycles(50), ghz, overhead);
+        const double p999 = to_ns(h.pct_cycles(99.9), ghz, overhead);
+        std::printf("%-30s %7.0fns %7.0fns %7.0fns %8.0fns %8.0fns %10.2f\n", name, p50,
+                    to_ns(h.pct_cycles(90), ghz, overhead),
+                    to_ns(h.pct_cycles(99), ghz, overhead), p999, p999 - p50,
+                    h.count() / timed / 1e6);
+        (void)produced;
+      }
+    }
+    std::printf("\nspread is p99.9 minus p50: how much the cost depends on what arrived.\n");
+    std::printf("the fixed decoder is not trying to be faster on average. it is trying to\n");
+    std::printf("be the same every time, which is what a hardware handler gives you for\n");
+    std::printf("free and what a switch statement does not.\n");
+    return 0;
+  }
 
   if (a.kernels) {
     // The queue model runs inside the replay loop, once per resting quote per

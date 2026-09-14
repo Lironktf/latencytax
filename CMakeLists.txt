@@ -59,7 +59,7 @@ add_library(ltx_wire STATIC
 target_link_libraries(ltx_wire PUBLIC ltx_flags ltx_engine)
 
 add_executable(bench bench/bench_main.cpp)
-target_link_libraries(bench PRIVATE ltx_engine)
+target_link_libraries(bench PRIVATE ltx_engine ltx_wire)
 
 add_executable(replay src/replay/replay_main.cpp)
 target_link_libraries(replay PRIVATE ltx_engine ltx_data)
