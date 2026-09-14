@@ -12,3 +12,5 @@ results/*_hourly.csv
 
 __pycache__/
 *.o
+results/*.itch
+results/*.bin

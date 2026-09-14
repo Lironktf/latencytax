@@ -88,6 +88,13 @@ class ReplayObserver {
   virtual void on_trade_print(const RawTrade& t, const OrderBook& book) {
     (void)t; (void)book;
   }
+  // The book is about to be cleared and rebuilt from the snapshot at `ts`,
+  // either at the start of a day or after a feed gap. Anything mirroring the
+  // book has to throw its own copy away at the same moment, and stamp whatever
+  // it emits with `ts` rather than with the last thing it saw: the teardown
+  // belongs to the snapshot that replaces the book, not to the one before the
+  // hole.
+  virtual void on_reseed(Ts ts, const OrderBook& book) { (void)ts; (void)book; }
 };
 
 class Reconstructor {

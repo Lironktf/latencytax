@@ -36,17 +36,26 @@ void Reconstructor::submit(const Command& c) {
 }
 
 void Reconstructor::seed(const Snapshot& s) {
+  now_ns_ = s.time_ms * 1000000;
+  if (obs_) obs_->on_reseed(now_ns_, eng_.book());
   eng_.book().clear();
   bid_.lv.assign(s.bids.begin(), s.bids.begin() + s.n_bids);
   ask_.lv.assign(s.asks.begin(), s.asks.begin() + s.n_asks);
-  now_ns_ = s.time_ms * 1000000;
   for (const RawLevel& l : bid_.lv) {
-    submit(Command{now_ns_, level_id(Side::Buy, l.tick), l.qty, l.tick, CmdType::AddLimit,
-                   Side::Buy, Tif::Gtc, 0});
+    submit(Command{.ts = now_ns_,
+                   .id = level_id(Side::Buy, l.tick),
+                   .qty = l.qty,
+                   .tick = l.tick,
+                   .type = CmdType::AddLimit,
+                   .side = Side::Buy});
   }
   for (const RawLevel& l : ask_.lv) {
-    submit(Command{now_ns_, level_id(Side::Sell, l.tick), l.qty, l.tick, CmdType::AddLimit,
-                   Side::Sell, Tif::Gtc, 0});
+    submit(Command{.ts = now_ns_,
+                   .id = level_id(Side::Sell, l.tick),
+                   .qty = l.qty,
+                   .tick = l.tick,
+                   .type = CmdType::AddLimit,
+                   .side = Side::Sell});
   }
 }
 
@@ -83,8 +92,13 @@ void Reconstructor::apply_trade(const RawTrade& t, WindowStats& w) {
   if (matched == 0) ++w.trades_no_liquidity;
 
   // Engine: the same print as a marketable immediate or cancel order.
-  submit(Command{now_ns_, ++taker_seq_, t.qty, t.tick, CmdType::AddLimit,
-                 t.aggressor, Tif::Ioc, 0});
+  submit(Command{.ts = now_ns_,
+                 .id = ++taker_seq_,
+                 .qty = t.qty,
+                 .tick = t.tick,
+                 .type = CmdType::AddLimit,
+                 .side = t.aggressor,
+                 .tif = Tif::Ioc});
 }
 
 void Reconstructor::reconcile(const Snapshot& target, WindowStats& w) {
@@ -104,12 +118,19 @@ void Reconstructor::reconcile(const Snapshot& target, WindowStats& w) {
         if (tgt[s][j].tick == c.tick) { found = &tgt[s][j]; break; }
       }
       if (!found) {
-        submit(Command{now_ns_, level_id(sides[s], c.tick), 0, c.tick, CmdType::Cancel,
-                       sides[s], Tif::Gtc, 0});
+        submit(Command{.ts = now_ns_,
+                       .id = level_id(sides[s], c.tick),
+                       .tick = c.tick,
+                       .type = CmdType::Cancel,
+                       .side = sides[s]});
         ++w.cancels;
       } else if (found->qty < c.qty) {
-        submit(Command{now_ns_, level_id(sides[s], c.tick), found->qty, c.tick,
-                       CmdType::Modify, sides[s], Tif::Gtc, 0});
+        submit(Command{.ts = now_ns_,
+                       .id = level_id(sides[s], c.tick),
+                       .qty = found->qty,
+                       .tick = c.tick,
+                       .type = CmdType::Modify,
+                       .side = sides[s]});
         ++w.modifies;
       }
     }
@@ -123,12 +144,20 @@ void Reconstructor::reconcile(const Snapshot& target, WindowStats& w) {
         if (c.tick == t.tick) { found = &c; break; }
       }
       if (!found) {
-        submit(Command{now_ns_, level_id(sides[s], t.tick), t.qty, t.tick, CmdType::AddLimit,
-                       sides[s], Tif::Gtc, 0});
+        submit(Command{.ts = now_ns_,
+                       .id = level_id(sides[s], t.tick),
+                       .qty = t.qty,
+                       .tick = t.tick,
+                       .type = CmdType::AddLimit,
+                       .side = sides[s]});
         ++w.adds;
       } else if (t.qty > found->qty) {
-        submit(Command{now_ns_, level_id(sides[s], t.tick), t.qty, t.tick, CmdType::Modify,
-                       sides[s], Tif::Gtc, 0});
+        submit(Command{.ts = now_ns_,
+                       .id = level_id(sides[s], t.tick),
+                       .qty = t.qty,
+                       .tick = t.tick,
+                       .type = CmdType::Modify,
+                       .side = sides[s]});
         ++w.modifies;
       }
     }

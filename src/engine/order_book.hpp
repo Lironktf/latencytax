@@ -59,6 +59,22 @@ class OrderBook {
   // down. Anything else is a cancel followed by a fresh order at the tail.
   Reject modify(Ts ts, OrderId id, Tick new_tick, Qty new_qty);
 
+  // --- book builder operations -------------------------------------------
+  // The two above describe what a client asks for. These two describe what the
+  // exchange reports back on a market data feed: an order gave up some size, or
+  // an order traded some size where it sat. ITCH calls them Order Cancel and
+  // Order Executed. Both keep queue position, because neither is a new order.
+  //
+  // Having both roles in one book is what lets the same engine be checked twice
+  // over: once by matching the tape as incoming orders, and once by applying
+  // the exchange's own execution reports off the wire.
+  Reject reduce(Ts ts, OrderId id, Qty shares_cancelled);
+  Reject execute(Ts ts, OrderId id, Qty shares, OrderId match_number = kNoOrder);
+  // ITCH Order Replace: retire one reference and put a new one in its place at
+  // the back of its queue. The side is taken from the order being replaced,
+  // because the message does not carry it.
+  Reject replace(Ts ts, OrderId orig_id, OrderId new_id, Tick new_tick, Qty new_qty);
+
   // --- state -------------------------------------------------------------
   Tick best_bid() const noexcept { return best_bid_; }
   Tick best_ask() const noexcept { return best_ask_; }

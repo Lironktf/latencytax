@@ -1,0 +1,4 @@
+
+ITCH path against the exchange snapshots
+  snapshots compared   639307
+  level positions      25572280 compared, 0 wrong (0.000000%)

@@ -290,6 +290,93 @@ Reject OrderBook::cancel(Ts ts, OrderId id) {
   return Reject::None;
 }
 
+Reject OrderBook::reduce(Ts ts, OrderId id, Qty shares_cancelled) {
+  const Slot s = ids_.find(id);
+  if (s == kNullSlot) {
+    if (sink_) sink_->on_reject(RejectEvent{ts, id, Reject::UnknownId});
+    return Reject::UnknownId;
+  }
+  if (shares_cancelled <= 0) {
+    if (sink_) sink_->on_reject(RejectEvent{ts, id, Reject::BadQty});
+    return Reject::BadQty;
+  }
+  Order& o = pool_[s];
+  if (shares_cancelled >= o.qty) {
+    // The feed says more went away than we think is there. Taking the whole
+    // order is the only reading that leaves the book consistent.
+    remove_resting(s, CancelReason::User, ts);
+    return Reject::None;
+  }
+  o.qty -= shares_cancelled;
+  levels_[idx(o.tick)].qty -= shares_cancelled;
+  if (sink_) {
+    sink_->on_cancel(
+        CancelEvent{ts, id, o.tick, shares_cancelled, o.side, CancelReason::User});
+  }
+  return Reject::None;
+}
+
+Reject OrderBook::execute(Ts ts, OrderId id, Qty shares, OrderId match_number) {
+  const Slot s = ids_.find(id);
+  if (s == kNullSlot) {
+    if (sink_) sink_->on_reject(RejectEvent{ts, id, Reject::UnknownId});
+    return Reject::UnknownId;
+  }
+  if (shares <= 0) {
+    if (sink_) sink_->on_reject(RejectEvent{ts, id, Reject::BadQty});
+    return Reject::BadQty;
+  }
+  Order& o = pool_[s];
+  const Qty take = std::min(shares, o.qty);
+  const Tick tick = o.tick;
+  const Side maker_side = o.side;
+  o.qty -= take;
+  levels_[idx(tick)].qty -= take;
+  if (sink_) {
+    // The aggressor is whoever took this resting order, so the opposite side.
+    sink_->on_trade(
+        TradeEvent{ts, id, match_number, tick, take, opposite(maker_side), o.qty});
+  }
+  if (o.qty == 0) {
+    Level& lv = levels_[idx(tick)];
+    unlink(idx(tick), s);
+    if (lv.orders == 0) {
+      lv.qty = 0;
+      lv.head = kNullSlot;
+      lv.tail = kNullSlot;
+      bit_clear(idx(tick));
+      refresh_best_after_removal(maker_side, idx(tick));
+    }
+    ids_.erase(id);
+    free_slot(s);
+  }
+  return take == shares ? Reject::None : Reject::BadQty;
+}
+
+Reject OrderBook::replace(Ts ts, OrderId orig_id, OrderId new_id, Tick new_tick,
+                          Qty new_qty) {
+  const Slot s = ids_.find(orig_id);
+  if (s == kNullSlot) {
+    if (sink_) sink_->on_reject(RejectEvent{ts, orig_id, Reject::UnknownId});
+    return Reject::UnknownId;
+  }
+  if (new_qty <= 0) {
+    if (sink_) sink_->on_reject(RejectEvent{ts, new_id, Reject::BadQty});
+    return Reject::BadQty;
+  }
+  if (!in_range(new_tick)) {
+    if (sink_) sink_->on_reject(RejectEvent{ts, new_id, Reject::PriceOutOfRange});
+    return Reject::PriceOutOfRange;
+  }
+  if (new_id != orig_id && ids_.find(new_id) != kNullSlot) {
+    if (sink_) sink_->on_reject(RejectEvent{ts, new_id, Reject::DuplicateId});
+    return Reject::DuplicateId;
+  }
+  const Side side = pool_[s].side;
+  remove_resting(s, CancelReason::Replace, ts);
+  return add_limit(ts, new_id, side, new_tick, new_qty, Tif::Gtc);
+}
+
 Reject OrderBook::modify(Ts ts, OrderId id, Tick new_tick, Qty new_qty) {
   const Slot s = ids_.find(id);
   if (s == kNullSlot) {

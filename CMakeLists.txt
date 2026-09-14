@@ -49,6 +49,11 @@ add_library(ltx_data STATIC
 )
 target_link_libraries(ltx_data PUBLIC ltx_flags ZLIB::ZLIB)
 
+add_library(ltx_wire STATIC
+  src/wire/decoder.cpp
+)
+target_link_libraries(ltx_wire PUBLIC ltx_flags ltx_engine)
+
 add_executable(bench bench/bench_main.cpp)
 target_link_libraries(bench PRIVATE ltx_engine)
 
@@ -58,11 +63,17 @@ target_link_libraries(replay PRIVATE ltx_engine ltx_data)
 add_executable(sim src/sim/sim_main.cpp)
 target_link_libraries(sim PRIVATE ltx_engine ltx_data)
 
+add_executable(itchgen tools/itchgen.cpp)
+target_link_libraries(itchgen PRIVATE ltx_engine ltx_data ltx_wire)
+
+add_executable(itchfeed tools/itchfeed.cpp)
+target_link_libraries(itchfeed PRIVATE ltx_engine ltx_data ltx_wire)
+
 
 include(CTest)
 enable_testing()
-foreach(t test_order_book test_spsc test_id_map test_reconstruct)
+foreach(t test_order_book test_spsc test_id_map test_reconstruct test_wire)
   add_executable(${t} tests/${t}.cpp)
-  target_link_libraries(${t} PRIVATE ltx_engine ltx_data)
+  target_link_libraries(${t} PRIVATE ltx_engine ltx_data ltx_wire)
   add_test(NAME ${t} COMMAND ${t})
 endforeach()

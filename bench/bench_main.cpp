@@ -195,7 +195,8 @@ class FlowGen {
       const Tick t = side == Side::Buy ? mid_ + 1 + static_cast<Tick>(rng_() % 3)
                                        : mid_ - 1 - static_cast<Tick>(rng_() % 3);
       k = OpKind::AddMarketable;
-      c = Command{0, next_id_++, take_qty(), t, CmdType::AddLimit, side, Tif::Ioc, 0};
+      c = Command{.id = next_id_++, .qty = take_qty(), .tick = t,
+                  .type = CmdType::AddLimit, .side = side, .tif = Tif::Ioc};
       return;
     }
     const Qty q = qty();
@@ -204,7 +205,7 @@ class FlowGen {
     const OrderId id = next_id_++;
     live_.push_back(LiveOrder{id, t, q, side});
     k = OpKind::AddRest;
-    c = Command{0, id, q, t, CmdType::AddLimit, side, Tif::Gtc, 0};
+    c = Command{.id = id, .qty = q, .tick = t, .type = CmdType::AddLimit, .side = side};
   }
 
   void emit_cancel(Command& c, OpKind& k) {
@@ -213,7 +214,7 @@ class FlowGen {
     live_[i] = live_.back();
     live_.pop_back();
     k = OpKind::Cancel;
-    c = Command{0, o.id, 0, o.tick, CmdType::Cancel, o.side, Tif::Gtc, 0};
+    c = Command{.id = o.id, .tick = o.tick, .type = CmdType::Cancel, .side = o.side};
   }
 
   void emit_modify(Command& c, OpKind& k) {
@@ -224,14 +225,16 @@ class FlowGen {
       // Size down at the same price: the path that keeps queue position.
       const Qty nq = o.qty > kQtyScale / 100 ? o.qty / 2 : o.qty;
       o.qty = nq;
-      c = Command{0, o.id, nq, o.tick, CmdType::Modify, o.side, Tif::Gtc, 0};
+      c = Command{.id = o.id, .qty = nq, .tick = o.tick, .type = CmdType::Modify,
+                  .side = o.side};
     } else {
       // Reprice by a tick: cancel and replace at the back of the new queue.
       const Tick nt = o.tick + ((rng_() & 1) ? 1 : -1);
       const Tick lo = o.side == Side::Buy ? mid_ - a_.depth_levels - 1 : mid_ + 1;
       const Tick hi = o.side == Side::Buy ? mid_ - 1 : mid_ + a_.depth_levels + 1;
       o.tick = nt < lo ? lo : (nt > hi ? hi : nt);
-      c = Command{0, o.id, o.qty, o.tick, CmdType::Modify, o.side, Tif::Gtc, 0};
+      c = Command{.id = o.id, .qty = o.qty, .tick = o.tick, .type = CmdType::Modify,
+                  .side = o.side};
     }
   }
 
