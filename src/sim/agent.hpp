@@ -48,6 +48,10 @@ struct AgentConfig {
   std::int64_t latency_us = 1000;
   double kappa = 1.0;
   SweepRule sweep_rule = SweepRule::Through;
+  // Fees are charged inside the agent so that equity, and therefore any
+  // marked-to-market interval PnL, is already net of them.
+  double maker_bps = 1.5;
+  double taker_bps = 4.5;
 };
 
 struct Fill {
@@ -67,6 +71,15 @@ class Agent {
   Qty inventory() const { return inv_; }
   double cash() const { return cash_; }
   const std::vector<Fill>& fills() const { return fills_; }
+  double fees_paid() const { return fees_; }
+  double maker_notional() const { return maker_notional_; }
+  double taker_notional() const { return taker_notional_; }
+  std::uint64_t maker_fills() const { return maker_fills_; }
+  std::uint64_t swept_fills() const { return swept_fills_; }
+  // Cash is already net of fees, so this is the full result of the position.
+  double equity(double mid_usd) const {
+    return cash_ + static_cast<double>(inv_) / kQtyScale * mid_usd;
+  }
   Qty max_abs_inventory() const { return max_abs_inv_; }
   std::uint64_t requotes() const { return requotes_; }
   std::uint64_t pending_high_water() const { return pending_hw_; }
@@ -169,6 +182,15 @@ class Agent {
                  bool taker = false) {
     const double px = static_cast<double>(tick) * c_.tick_usd;
     const double notional = px * static_cast<double>(qty) / kQtyScale;
+    const double fee = notional * (taker ? c_.taker_bps : c_.maker_bps) / 1e4;
+    fees_ += fee;
+    if (taker) {
+      taker_notional_ += notional;
+    } else {
+      maker_notional_ += notional;
+      ++maker_fills_;
+      if (swept) ++swept_fills_;
+    }
     if (side == Side::Buy) {
       cash_ -= notional;
       inv_ += qty;
@@ -176,6 +198,7 @@ class Agent {
       cash_ += notional;
       inv_ -= qty;
     }
+    cash_ -= fee;
     const Qty a = inv_ < 0 ? -inv_ : inv_;
     if (a > max_abs_inv_) max_abs_inv_ = a;
     fills_.push_back(Fill{ts_us, side, tick, qty, swept, taker});
@@ -269,6 +292,9 @@ class Agent {
   double cash_ = 0;
   std::vector<Fill> fills_;
   Qty max_abs_inv_ = 0;
+  double fees_ = 0;
+  double maker_notional_ = 0, taker_notional_ = 0;
+  std::uint64_t maker_fills_ = 0, swept_fills_ = 0;
   std::uint64_t requotes_ = 0;
   std::size_t pending_hw_ = 0;
 

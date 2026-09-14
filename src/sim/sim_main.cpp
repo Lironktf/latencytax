@@ -50,7 +50,9 @@ struct Args {
   Fees fees;
   std::string csv;
   std::string fills_csv;
+  std::string hourly_csv;
   bool fit_beta = false;
+  bool fit_k = false;
   bool quiet = false;
 };
 
@@ -78,7 +80,9 @@ void usage() {
       "  --taker-bps=N       taker fee, default 4.5 (Hyperliquid tier 0)\n"
       "  --csv=FILE          write one row per day and agent\n"
       "  --fills-csv=FILE    write every fill (large)\n"
+      "  --hourly-csv=FILE   write hourly marked to market pnl per agent\n"
       "  --fit-beta          report the order flow regression instead of running agents\n"
+      "  --fit-k             fit the AS order arrival decay from the tape and exit\n"
       "  --quiet\n"
       "  --help\n");
 }
@@ -127,6 +131,7 @@ bool parse_args(int argc, char** argv, Args& a) {
     else if (str("--sweep=", a.sweep)) {}
     else if (str("--csv=", a.csv)) {}
     else if (str("--fills-csv=", a.fills_csv)) {}
+    else if (str("--hourly-csv=", a.hourly_csv)) {}
     else if (num("--size=", a.size_eth)) {}
     else if (num("--max-inv=", a.max_inv_eth)) {}
     else if (num("--k=", a.k)) {}
@@ -134,6 +139,7 @@ bool parse_args(int argc, char** argv, Args& a) {
     else if (num("--maker-bps=", a.fees.maker_bps)) {}
     else if (num("--taker-bps=", a.fees.taker_bps)) {}
     else if (s == "--fit-beta") a.fit_beta = true;
+    else if (s == "--fit-k") a.fit_k = true;
     else if (s == "--quiet") a.quiet = true;
     else { std::fprintf(stderr, "unknown argument %s\n", s.c_str()); usage(); return false; }
   }
@@ -146,6 +152,7 @@ class SimObserver final : public ReplayObserver {
   explicit SimObserver(std::vector<Agent>& agents) : agents_(agents) {}
 
   void on_snapshot(const Snapshot& s, const OrderBook& book) override {
+    // `agents_` is non-const here because the marks read agent state.
     if (!book.has_bid() || !book.has_ask()) return;
     const Tick bb = book.best_bid();
     const Tick ba = book.best_ask();
@@ -162,6 +169,22 @@ class SimObserver final : public ReplayObserver {
     }
     last_bb_ = bb;
     last_ba_ = ba;
+
+    const std::int64_t hour = s.time_ms / 3600000;
+    if (hour != last_hour_) {
+      const double mid = 0.5 * (static_cast<double>(bb) + static_cast<double>(ba)) * 0.1;
+      HourMark m;
+      m.hour_start_ms = hour * 3600000;
+      m.equity.reserve(agents_.size());
+      for (const Agent& a : agents_) {
+        m.equity.push_back(a.equity(mid));
+        m.maker_notional.push_back(a.maker_notional());
+        m.fees.push_back(a.fees_paid());
+        m.fills.push_back(a.maker_fills());
+      }
+      marks_.push_back(std::move(m));
+      last_hour_ = hour;
+    }
   }
 
   void on_trade_print(const RawTrade& t, const OrderBook& book) override {
@@ -172,6 +195,17 @@ class SimObserver final : public ReplayObserver {
     for (Agent& a : agents_) a.on_print(us, t.aggressor, t.tick, t.qty, bq, aq);
   }
 
+  // Marked to market at every hour boundary so the bootstrap has a finer
+  // resampling block than a whole day.
+  struct HourMark {
+    std::int64_t hour_start_ms;
+    std::vector<double> equity;         // one per agent
+    std::vector<double> maker_notional;
+    std::vector<double> fees;
+    std::vector<std::uint64_t> fills;
+  };
+  const std::vector<HourMark>& hour_marks() const { return marks_; }
+
   const std::vector<std::int64_t>& mid_ts() const { return mid_ts_; }
   const std::vector<double>& mid_px() const { return mid_px_; }
   Tick last_bb() const { return last_bb_; }
@@ -181,6 +215,8 @@ class SimObserver final : public ReplayObserver {
   std::vector<Agent>& agents_;
   std::vector<std::int64_t> mid_ts_;
   std::vector<double> mid_px_;
+  std::vector<HourMark> marks_;
+  std::int64_t last_hour_ = -1;
   Tick last_bb_ = kInvalidTick;
   Tick last_ba_ = kInvalidTick;
 };
@@ -245,6 +281,60 @@ int main(int argc, char** argv) {
   cfg.max_tick = 262144;
   cfg.max_orders = 1u << 16;
   cfg.id_map_capacity = 1u << 17;
+
+  // --- AS arrival intensity fit -------------------------------------------
+  if (a.fit_k) {
+    // Avellaneda-Stoikov models the rate of fills at a distance delta from the
+    // mid as A * exp(-k * delta). Every print in the tape is a fill for whoever
+    // was resting at that price, so the empirical distribution of a print's
+    // distance from the prevailing mid identifies k. For an exponential the
+    // maximum likelihood estimate is the reciprocal of the mean distance. The
+    // estimate is reported unweighted and weighted by traded size, and by
+    // distance in ticks so the scale is legible.
+    long double sum_d = 0, sum_wd = 0, sum_w = 0;
+    std::uint64_t n = 0, at_touch = 0;
+    std::vector<double> ds;
+    for (const std::string& day : days) {
+      LoadStats bs{}, ts{};
+      auto snaps = load_snapshots(book_root, day, 1, bs);
+      auto trades = load_trades(trade_root, day, 1, ts);
+      if (snaps.size() < 2) continue;
+      std::size_t si = 0;
+      for (const RawTrade& t : trades) {
+        while (si + 1 < snaps.size() && snaps[si + 1].time_ms <= t.time_ms) ++si;
+        if (snaps[si].n_bids == 0 || snaps[si].n_asks == 0) continue;
+        if (snaps[si].time_ms > t.time_ms) continue;
+        const double mid = 0.5 * (snaps[si].bids[0].tick + snaps[si].asks[0].tick) * 0.1;
+        const double d = std::fabs(static_cast<double>(t.tick) * 0.1 - mid);
+        const double w = static_cast<double>(t.qty) / kQtyScale;
+        sum_d += d;
+        sum_wd += d * w;
+        sum_w += w;
+        ++n;
+        if (d <= 0.051) ++at_touch;
+        if (ds.size() < 4000000) ds.push_back(d);
+      }
+    }
+    if (!n) { std::fprintf(stderr, "no prints\n"); return 1; }
+    const double mean_d = static_cast<double>(sum_d / n);
+    const double mean_wd = static_cast<double>(sum_wd / sum_w);
+    std::sort(ds.begin(), ds.end());
+    std::printf("AS arrival decay fit over %zu days, %llu prints\n", days.size(),
+                static_cast<unsigned long long>(n));
+    std::printf("  distance of a print from the prevailing mid, USD:\n");
+    std::printf("    mean %.5f  median %.5f  p90 %.5f  p99 %.5f  max %.4f\n", mean_d,
+                ds[ds.size() / 2], ds[static_cast<std::size_t>(ds.size() * 0.90)],
+                ds[static_cast<std::size_t>(ds.size() * 0.99)], ds.back());
+    std::printf("    at the touch (half a tick): %.2f%% of prints\n",
+                100.0 * at_touch / n);
+    std::printf("  k = 1/mean = %.4f per USD (unweighted)\n", 1.0 / mean_d);
+    std::printf("  k = 1/mean = %.4f per USD (weighted by traded size)\n", 1.0 / mean_wd);
+    std::printf("  at gamma=5, the AS spread term (2/gamma)*ln(1+gamma/k) is %.4f USD"
+                " = %.2f ticks\n",
+                (2.0 / 5.0) * std::log1p(5.0 / (1.0 / mean_d)),
+                (2.0 / 5.0) * std::log1p(5.0 / (1.0 / mean_d)) / 0.1);
+    return 0;
+  }
 
   // --- order flow regression mode -----------------------------------------
   if (a.fit_beta) {
@@ -328,6 +418,8 @@ int main(int argc, char** argv) {
             c.ofi_halflife_s = a.ofi_halflife_s;
             c.quote_size = static_cast<Qty>(a.size_eth * kQtyScale + 0.5);
             c.max_inventory = static_cast<Qty>(a.max_inv_eth * kQtyScale + 0.5);
+            c.maker_bps = a.fees.maker_bps;
+            c.taker_bps = a.fees.taker_bps;
             configs.push_back(c);
           }
 
@@ -340,6 +432,15 @@ int main(int argc, char** argv) {
                  "requote_ticks,requotes,maker_notional,taker_notional,gross_pnl,fees,net_pnl,edge_bps,"
                  "markout_1s_bps,markout_5s_bps,markout_30s_bps,markout_n,max_abs_inv_eth,"
                  "end_inv_eth,buy_eth,sell_eth,maker_bps,taker_bps\n");
+  }
+  std::FILE* hcsv = nullptr;
+  if (!a.hourly_csv.empty()) {
+    hcsv = std::fopen(a.hourly_csv.c_str(), "w");
+    if (hcsv) {
+      std::fprintf(hcsv,
+                   "day,hour_start_ms,latency_ms,gamma,offset_ticks,requote_ticks,beta,kappa,"
+                   "pnl,maker_notional,fees,fills\n");
+    }
   }
   std::FILE* fcsv = nullptr;
   if (!a.fills_csv.empty()) {
@@ -403,15 +504,7 @@ int main(int argc, char** argv) {
       for (const Fill& f : ag.fills()) {
         const double px = static_cast<double>(f.tick) * 0.1;
         const double q = static_cast<double>(f.qty) / kQtyScale;
-        const double notional = px * q;
-        if (f.taker) {
-          r.taker_notional += notional;
-          r.fees += notional * a.fees.taker_bps / 1e4;
-        } else {
-          ++r.maker_fills;
-          if (f.swept) ++r.swept_fills;
-          r.maker_notional += notional;
-          r.fees += notional * a.fees.maker_bps / 1e4;
+        if (!f.taker) {
           const double s = f.side == Side::Buy ? 1.0 : -1.0;
           const std::int64_t t_ms = f.ts_us / 1000;
           bool ok1 = false, ok5 = false, ok30 = false;
@@ -436,9 +529,15 @@ int main(int argc, char** argv) {
       r.mo_n = mo_n;
       if (mo_n) { r.mo1 = mo1 / mo_n; r.mo5 = mo5 / mo_n; r.mo30 = mo30 / mo_n; }
 
+      r.maker_fills = ag.maker_fills();
+      r.swept_fills = ag.swept_fills();
+      r.maker_notional = ag.maker_notional();
+      r.taker_notional = ag.taker_notional();
+      r.fees = ag.fees_paid();
       // Inventory is flat after the forced close, so cash is the whole result.
-      r.gross_pnl = ag.cash();
-      r.net_pnl = r.gross_pnl - r.fees;
+      // Cash is already net of fees.
+      r.net_pnl = ag.cash();
+      r.gross_pnl = r.net_pnl + r.fees;
       const double notional = r.maker_notional + r.taker_notional;
       r.edge_bps = notional > 0 ? r.net_pnl / notional * 1e4 : 0.0;
       r.max_abs_inv = static_cast<double>(ag.max_abs_inventory()) / kQtyScale;
@@ -466,8 +565,27 @@ int main(int argc, char** argv) {
       }
       all.push_back(r);
     }
+
+    if (hcsv) {
+      const auto& marks = obs.hour_marks();
+      for (std::size_t m = 1; m < marks.size(); ++m) {
+        for (std::size_t ci = 0; ci < configs.size(); ++ci) {
+          std::fprintf(hcsv, "%s,%lld,%.4f,%.6f,%d,%d,%.8f,%.4f,%.8f,%.4f,%.6f,%llu\n",
+                       day.c_str(), static_cast<long long>(marks[m].hour_start_ms),
+                       static_cast<double>(configs[ci].latency_us) / 1000.0,
+                       configs[ci].gamma, configs[ci].offset_ticks,
+                       configs[ci].requote_ticks, configs[ci].beta, configs[ci].kappa,
+                       marks[m].equity[ci] - marks[m - 1].equity[ci],
+                       marks[m].maker_notional[ci] - marks[m - 1].maker_notional[ci],
+                       marks[m].fees[ci] - marks[m - 1].fees[ci],
+                       static_cast<unsigned long long>(marks[m].fills[ci] -
+                                                       marks[m - 1].fills[ci]));
+        }
+      }
+    }
   }
   if (csv) std::fclose(csv);
+  if (hcsv) std::fclose(hcsv);
   if (fcsv) std::fclose(fcsv);
 
   // Pooled summary per agent config, so a sweep is readable without the csv.

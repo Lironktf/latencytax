@@ -250,3 +250,88 @@ edge in basis points over the four calibration days. The holdout is then run
 once at the selected point. The latency curve is also reported for the runner up
 configurations, so that the reader can see whether the conclusion about latency
 depends on which agent was picked.
+
+---
+
+## Amendment 2, 2026-09-14
+
+Made after the calibration grid was run on the four calibration days, and before
+any run on any holdout day.
+
+### 2.1 The AS arrival decay is now fitted rather than guessed
+
+The parameter k in the Avellaneda-Stoikov spread term had been sitting at an
+arbitrary 1.5 per USD. On a market whose tick is 0.1 USD that puts the quotes
+about three ticks behind the touch, which is not market making.
+
+k is the decay of fill intensity with distance from the mid: the model says
+fills arrive at a rate A * exp(-k * delta). Every print in the tape is a fill for
+whoever was resting at that price, so the distribution of a print's distance from
+the prevailing mid identifies k directly, and for an exponential the maximum
+likelihood estimate is one over the mean distance.
+
+Over the four calibration days and 110,264 prints, the distance from the
+prevailing mid has mean 0.11518 USD and median 0.05000 USD, and 76.49% of prints
+land within half a tick of the mid. That gives
+
+    k = 8.6820 per USD   (unweighted, the arrival rate reading of the model)
+    k = 5.9541 per USD   (weighted by traded size)
+
+The unweighted figure is used, since the AS intensity is an order arrival rate.
+At gamma = 5 the spread term is then 0.1819 USD, about 1.8 ticks, and the agent
+quotes at or one tick behind the touch. This is a calibration on calibration
+days, which the original plan provides for; it is written down here because the
+value materially changes the agent.
+
+### 2.2 The pre-registered selection rule is degenerate, and is replaced
+
+Result of the calibration grid, 36 configurations, latency 1 ms, tier 0 fees:
+every single one has negative net edge. The range is -1.94 to -3.34 basis
+points. That is the calibration finding and it is reported as such.
+
+It also breaks the selection step. When every fill loses money, "pick the
+configuration with the best net edge in basis points" is a rule that ranks
+configurations by how little they trade. The winner of the grid, at -1.94 bps,
+is gamma = 20, offset = 1, requote = 3, which takes 135 fills in four days. The
+runner up takes 51. Choosing on PnL here does not select a market maker, it
+selects an agent that has almost stopped quoting, and it would leave the latency
+sweep with too few fills to measure anything.
+
+The selection rule is therefore replaced, before the holdout is opened, with one
+that does not look at PnL at all:
+
+- offset = 0. A market maker quotes at the touch. This is a structural choice,
+  not a fitted one.
+- gamma = 5, the middle of the grid.
+- requote = 3, the grid value that yields the most fills at gamma = 5 and
+  therefore the tightest latency estimate. The objective here is measurement
+  precision, not profit.
+- beta = 0.00008052 from the calibration regression.
+- kappa = 1.0, k = 8.6820, quote size 0.5 ETH, inventory limit 25 ETH.
+
+The companion configuration is the same with gamma = 0, which is the skew-off
+arm of the third result and which carries most of the statistical power: it takes
+about nine times as many fills.
+
+The holdout is reported for the full nine-way cross of gamma in {0, 5, 20} and
+requote in {0, 1, 3} at every latency, so a reader can check whether the
+conclusion about latency survives a different choice of agent. Only the primary
+and companion are called out as the headline.
+
+### 2.3 Sharper statistics
+
+The agents are deterministic functions of the same market data, so a comparison
+between two latencies is paired, not independent. The bootstrap resamples the
+paired per-period difference in PnL and in edge between latency L and the 0.1 ms
+baseline, rather than resampling the two levels separately. Pairing removes the
+day to day market variation, which is far larger than the latency effect.
+
+Two resampling units are reported:
+
+- days, as originally registered, 5 holdout days;
+- hourly blocks, marked to market at each hour boundary, roughly 120 holdout
+  hours. Inventory is carried across boundaries and marked at the snapshot mid,
+  and fees are already inside the marked equity.
+
+The day level interval is the registered one and is the headline. The hourly one
+is a secondary with more resolution and is labelled as such.
