@@ -629,3 +629,23 @@ INFO: seed corpus: files: 3 min: 49b max: 272b total: 371b rss: 32Mb
 #1742784	REDUCE cov: 239 ft: 1009 corp: 136/21Kb lim: 4096 exec/s: 29538 rss: 548Mb L: 222/1029 MS: 1 EraseBytes-
 #1761141	REDUCE cov: 239 ft: 1009 corp: 136/21Kb lim: 4096 exec/s: 29849 rss: 548Mb L: 7/1029 MS: 2 EraseBytes-ChangeBinInt-
 #1762925	REDUCE cov: 239 ft: 1009 corp: 136/21Kb lim: 4096 exec/s: 29880 rss: 548Mb L: 101/1029 MS: 4 InsertByte-ChangeASCIIInt-ShuffleBytes-EraseBytes-
+#1785416	REDUCE cov: 239 ft: 1009 corp: 136/21Kb lim: 4096 exec/s: 29756 rss: 548Mb L: 6/1029 MS: 1 EraseBytes-
+#1789792	REDUCE cov: 239 ft: 1009 corp: 136/21Kb lim: 4096 exec/s: 29829 rss: 548Mb L: 394/1029 MS: 1 EraseBytes-
+#1826053	REDUCE cov: 239 ft: 1009 corp: 136/21Kb lim: 4096 exec/s: 29452 rss: 548Mb L: 375/1029 MS: 1 EraseBytes-
+#1830765	REDUCE cov: 239 ft: 1009 corp: 136/21Kb lim: 4096 exec/s: 29528 rss: 548Mb L: 186/1029 MS: 2 ShuffleBytes-EraseBytes-
+#1850483	REDUCE cov: 239 ft: 1009 corp: 136/21Kb lim: 4096 exec/s: 29846 rss: 548Mb L: 377/1029 MS: 3 ChangeASCIIInt-ChangeBinInt-EraseBytes-
+#1914799	REDUCE cov: 239 ft: 1009 corp: 136/21Kb lim: 4096 exec/s: 29458 rss: 548Mb L: 182/1029 MS: 1 EraseBytes-
+#1944771	REDUCE cov: 239 ft: 1009 corp: 136/21Kb lim: 4096 exec/s: 29466 rss: 548Mb L: 128/1029 MS: 2 CrossOver-EraseBytes-
+#1956092	REDUCE cov: 239 ft: 1009 corp: 136/21Kb lim: 4096 exec/s: 29637 rss: 548Mb L: 371/1029 MS: 1 EraseBytes-
+#1963279	REDUCE cov: 239 ft: 1009 corp: 136/21Kb lim: 4096 exec/s: 29746 rss: 548Mb L: 331/1029 MS: 2 ChangeBinInt-EraseBytes-
+#2019845	REDUCE cov: 239 ft: 1009 corp: 136/20Kb lim: 4096 exec/s: 29703 rss: 548Mb L: 569/1029 MS: 1 EraseBytes-
+#2079421	REDUCE cov: 239 ft: 1009 corp: 136/20Kb lim: 4096 exec/s: 29706 rss: 548Mb L: 16/1029 MS: 1 EraseBytes-
+#2097152	pulse  cov: 239 ft: 1009 corp: 136/20Kb lim: 4096 exec/s: 29537 rss: 548Mb
+#2100698	REDUCE cov: 239 ft: 1009 corp: 136/20Kb lim: 4096 exec/s: 29587 rss: 548Mb L: 101/1029 MS: 2 ShuffleBytes-EraseBytes-
+#2105289	REDUCE cov: 239 ft: 1010 corp: 137/21Kb lim: 4096 exec/s: 29651 rss: 548Mb L: 202/1029 MS: 1 CopyPart-
+#2129984	REDUCE cov: 239 ft: 1010 corp: 137/21Kb lim: 4096 exec/s: 29583 rss: 548Mb L: 158/1029 MS: 5 CopyPart-CopyPart-ChangeBinInt-CopyPart-EraseBytes-
+#2159556	REDUCE cov: 239 ft: 1010 corp: 137/21Kb lim: 4096 exec/s: 29582 rss: 548Mb L: 127/1029 MS: 2 ChangeBinInt-EraseBytes-
+#2188677	REDUCE cov: 239 ft: 1010 corp: 137/21Kb lim: 4096 exec/s: 29576 rss: 548Mb L: 15/1029 MS: 1 EraseBytes-
+#2217968	REDUCE cov: 239 ft: 1010 corp: 137/21Kb lim: 4096 exec/s: 29572 rss: 548Mb L: 141/1029 MS: 1 EraseBytes-
+#2220440	REDUCE cov: 239 ft: 1010 corp: 137/21Kb lim: 4096 exec/s: 29216 rss: 548Mb L: 943/943 MS: 2 ChangeBit-EraseBytes-
+#2258957	REDUCE cov: 239 ft: 1015 corp: 138/21Kb lim: 4096 exec/s: 29337 rss: 548Mb L: 943/943 MS: 2 ChangeBinInt-CopyPart-
