@@ -26,6 +26,7 @@
 #include "events.hpp"
 #include "id_map.hpp"
 #include "types.hpp"
+#include "util/hugevec.hpp"
 
 namespace ltx {
 
@@ -154,9 +155,9 @@ class OrderBook {
 
   BookConfig cfg_;
   EventSink* sink_;
-  std::vector<Level> levels_;
-  std::vector<std::uint64_t> occupied_;
-  std::vector<Order> pool_;
+  HugeVec<Level> levels_;
+  HugeVec<std::uint64_t> occupied_;
+  HugeVec<Order> pool_;
   Slot free_head_ = kNullSlot;
   std::size_t pool_used_ = 0;
   IdMap ids_;

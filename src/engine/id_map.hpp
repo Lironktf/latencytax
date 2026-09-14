@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "types.hpp"
+#include "util/hugevec.hpp"
 
 namespace ltx {
 
@@ -106,7 +107,7 @@ class IdMap {
   }
 
   void grow() {
-    std::vector<Entry> old;
+    HugeVec<Entry> old;
     old.swap(buckets_);
     buckets_.assign(old.size() * 2, Entry{});
     mask_ = buckets_.size() - 1;
@@ -116,7 +117,7 @@ class IdMap {
     }
   }
 
-  std::vector<Entry> buckets_;
+  HugeVec<Entry> buckets_;
   std::size_t mask_ = 0;
   std::size_t size_ = 0;
 };

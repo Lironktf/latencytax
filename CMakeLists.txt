@@ -79,6 +79,9 @@ target_link_libraries(mlgen PRIVATE ltx_engine ltx_data)
 add_executable(mltrain tools/mltrain.cpp)
 target_link_libraries(mltrain PRIVATE ltx_engine ltx_data)
 
+add_executable(ticktotrade tools/ticktotrade.cpp)
+target_link_libraries(ticktotrade PRIVATE ltx_engine ltx_wire)
+
 
 include(CTest)
 enable_testing()

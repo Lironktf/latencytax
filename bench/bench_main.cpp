@@ -40,6 +40,7 @@
 #include "ml/logistic.hpp"
 #include "ml/mlp.hpp"
 #include "util/affinity.hpp"
+#include "util/hugevec.hpp"
 #include "util/timing.hpp"
 
 using namespace ltx;
@@ -60,6 +61,7 @@ struct Args {
   std::size_t max_live = 200000;
   bool csv = false;
   bool kernels = false;
+  int hugepages = 1;
 };
 
 void usage() {
@@ -77,6 +79,7 @@ void usage() {
       "  --seed=N           flow generator seed\n"
       "  --csv              also print the table as csv\n"
       "  --kernels          benchmark the ml kernels instead of the engine\n"
+      "  --hugepages=0|1    ask for 2 MB pages for the book arrays, default 1\n"
       "  --help\n");
 }
 
@@ -98,6 +101,7 @@ bool parse_args(int argc, char** argv, Args& a) {
     else if (num("--seed=", d)) a.seed = static_cast<std::uint64_t>(d);
     else if (s == "--csv") a.csv = true;
     else if (s == "--kernels") a.kernels = true;
+    else if (num("--hugepages=", d)) a.hugepages = static_cast<int>(d);
     else if (s.rfind("--mix=", 0) == 0) {
       if (std::sscanf(s.c_str() + 6, "%lf,%lf,%lf,%lf", &a.pct_add, &a.pct_cancel,
                       &a.pct_modify, &a.pct_marketable) != 4) {
@@ -295,6 +299,8 @@ int main(int argc, char** argv) {
   Args a;
   if (!parse_args(argc, argv, a)) return argc > 1 && std::string(argv[1]) == "--help" ? 0 : 1;
 
+  huge_pages_enabled() = a.hugepages != 0;
+
   if (a.core >= 0 && !pin_to_core(a.core)) {
     std::fprintf(stderr, "warning: could not pin to core %d\n", a.core);
   }
@@ -311,8 +317,11 @@ int main(int argc, char** argv) {
     timer_cost.add(t1 - t0);
   }
   const double overhead = timer_cost.pct_cycles(50);
-  std::printf("timer pair cost: p50 %.0f cycles (%.1f ns), subtracted from the latency table\n\n",
+  std::printf("timer pair cost: p50 %.0f cycles (%.1f ns), subtracted from the latency table\n",
               overhead, overhead / ghz);
+  std::printf("book arrays: %s\n\n",
+              a.hugepages ? "2 MB pages requested with madvise"
+                          : "4 KB pages, huge pages explicitly refused");
 
   if (a.kernels) {
     // The queue model runs inside the replay loop, once per resting quote per

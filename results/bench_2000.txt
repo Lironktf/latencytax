@@ -1,32 +1,33 @@
 host: 4 cpus, tsc 2.4000 GHz (measured against CLOCK_MONOTONIC)
-timer pair cost: p50 36 cycles (15.0 ns), subtracted from the latency table
+timer pair cost: p50 33 cycles (13.8 ns), subtracted from the latency table
+book arrays: 2 MB pages requested with madvise
 
 per operation latency, matcher pinned, 30 s of timed work
 operation                   count       p50       p90       p99     p99.9      mean       max
-add (rests)              71304415       50ns       83ns      195ns      454ns       65ns   3021.3us
-add (marketable)          8388129       49ns      128ns      305ns      621ns       78ns   1004.1us
-cancel                   71304411       45ns       74ns      184ns      426ns       58ns   2235.7us
-modify                   16775205       44ns      128ns      215ns      479ns       72ns   1443.9us
-all                     167772160       48ns       85ns      206ns      464ns       64ns   3021.3us
-book at end: 1882 resting orders (generator target 2000), best bid 19196 best ask 19198
-events: 12895539 trades, 78813018 accepts, 85539930 cancels, 5179678 rejects
+add (rests)              71749916       50ns       84ns      169ns      451ns       66ns   4512.0us
+add (marketable)          8440731       49ns      126ns      295ns      624ns       79ns   1820.5us
+cancel                   71749918       45ns       71ns      158ns      419ns       57ns   3445.2us
+modify                   16880171       43ns      123ns      208ns      470ns       71ns   2116.7us
+all                     168820736       48ns       84ns      189ns      458ns       63ns   4512.0us
+book at end: 1887 resting orders (generator target 2000), best bid 19196 best ask 19198
+events: 12973418 trades, 79287853 accepts, 86055136 cancels, 5210975 rejects
 
 csv,phase,op,count,p50_ns,p90_ns,p99_ns,p999_ns,max_ns
-csv,latency,add (rests),71304415,50.0,82.5,195.0,453.8,3021298.4
-csv,latency,add (marketable),8388129,48.8,127.5,305.0,621.3,1004136.9
-csv,latency,cancel,71304411,45.0,73.8,183.8,426.3,2235663.1
-csv,latency,modify,16775205,43.8,127.5,215.0,478.8,1443924.0
-csv,latency,all,167772160,47.5,85.0,206.3,463.8,3021298.4
-single thread throughput: 16.71 M msg/s (59.9 ns/msg), 502267904 messages in 30.1 s
-  resting orders at end: 1877, trades: 37676079
+csv,latency,add (rests),71749916,50.0,83.8,168.8,451.3,4511973.1
+csv,latency,add (marketable),8440731,48.8,126.3,295.0,623.8,1820453.9
+csv,latency,cancel,71749918,45.0,71.3,157.5,418.8,3445249.0
+csv,latency,modify,16880171,42.5,122.5,207.5,470.0,2116685.3
+csv,latency,all,168820736,47.5,83.8,188.8,457.5,4511973.1
+single thread throughput: 17.01 M msg/s (58.8 ns/msg), 510656512 messages in 30.0 s
+  resting orders at end: 1906, trades: 38297713
 
 feed thread -> spsc ring -> matcher, saturated, both pinned
-  end to end: 15.52 M msg/s over 30.0 s (465846272 messages, bulk push and pop)
+  end to end: 15.88 M msg/s over 30.0 s (476590080 messages, bulk push and pop)
 
 spsc handoff latency, unloaded (producer waits for the ring to drain)
-  9990000 samples: p50 238 ns  p99 750 ns  p99.9 16565 ns  max 1917.7 us
-csv,throughput,single_thread_mps,16.7083
-csv,throughput,pipeline_mps,15.5247
-csv,handoff,p50_ns,237.5
-csv,handoff,p99_ns,750.0
-csv,handoff,p999_ns,16565.2
+  18711000 samples: p50 135 ns  p99 183 ns  p99.9 1688 ns  max 3372.3 us
+csv,throughput,single_thread_mps,17.0093
+csv,throughput,pipeline_mps,15.8846
+csv,handoff,p50_ns,135.0
+csv,handoff,p99_ns,182.5
+csv,handoff,p999_ns,1687.5

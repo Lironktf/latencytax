@@ -1,0 +1,18 @@
+tick to trade, udp on loopback, feed pinned to cpu 3 and engine to cpu 2
+tsc 2.4000 GHz, timer pair 33 cycles subtracted, 286255 packets sent, 286255 round trips measured (100.00% seen)
+
+  stage
+  kernel in, send to recv    p50     6059 ns   p99     54600 ns   p99.9    218442 ns   max  7042.9 us
+  decode the packet          p50       69 ns   p99       414 ns   p99.9      1030 ns   max   129.9 us
+  apply to the book          p50      310 ns   p99       881 ns   p99.9     15969 ns   max   468.2 us
+  look at the book, decide   p50        9 ns   p99        28 ns   p99.9       101 ns   max    62.7 us
+  kernel out, sendto         p50     5574 ns   p99     27227 ns   p99.9    109214 ns   max  4312.7 us
+  return leg (incl. sendto)  p50     5866 ns   p99     26969 ns   p99.9    109214 ns   max  4312.3 us
+
+  engine work, t1 to t5      p50      434 ns   p99      1264 ns   p99.9     16858 ns   max   468.4 us
+  tick to trade, t0 to t6    p50    13346 ns   p99     54600 ns   p99.9    436899 ns   max  7100.8 us
+
+  at the median, the part this repository wrote is 3.2% of the whole path (434 ns of 13346 ns)
+  the rest is the kernel network stack, twice. there is no NIC here and no
+  kernel bypass, so this is a floor on a real path rather than an estimate
+  of one.

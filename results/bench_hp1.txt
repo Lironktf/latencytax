@@ -1,0 +1,22 @@
+host: 4 cpus, tsc 2.4000 GHz (measured against CLOCK_MONOTONIC)
+timer pair cost: p50 39 cycles (16.3 ns), subtracted from the latency table
+book arrays: 2 MB pages requested with madvise
+
+per operation latency, matcher pinned, 30 s of timed work
+operation                   count       p50       p90       p99     p99.9      mean       max
+add (rests)              36097378      113ns      193ns      460ns     9563ns      155ns   1718.6us
+add (marketable)          4246721      110ns      309ns      794ns    11310ns      181ns    499.9us
+cancel                   36097379      173ns      273ns      541ns    12158ns      202ns   3138.3us
+modify                    8493178      175ns      356ns      629ns    15271ns      228ns   2686.9us
+all                      84934656      128ns      269ns      535ns    11238ns      183ns   3138.3us
+book at end: 177579 resting orders (generator target 200000), best bid 19195 best ask 19196
+events: 11508390 trades, 38568099 accepts, 38981660 cancels, 9038572 rejects
+
+single thread throughput: 6.24 M msg/s (160.3 ns/msg), 187695104 messages in 30.1 s
+  resting orders at end: 159932, trades: 24918309
+
+feed thread -> spsc ring -> matcher, saturated, both pinned
+  end to end: 5.31 M msg/s over 30.0 s (159473664 messages, bulk push and pop)
+
+spsc handoff latency, unloaded (producer waits for the ring to drain)
+  11945000 samples: p50 146 ns  p99 771 ns  p99.9 14305 ns  max 3024.5 us

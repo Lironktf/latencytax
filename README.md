@@ -22,10 +22,11 @@ never reads engine state, so this is a check on the engine rather than a
 tautology.
 
 **The engine's speed depends on the size of the book, and the numbers say by how
-much.** With 2,000 resting orders it runs at 16.71 million messages per second
-with a median operation of 48 ns and a p99.9 of 464 ns. With 200,000 resting
-orders the same code runs at 4.11 million messages per second with a median of
-205 ns and a p99.9 of 13.7 us. Nothing about the algorithm changed between those
+much, and huge pages are worth 62% of it.** With 2,000 resting orders it runs at
+17.01 million messages per second with a median operation of 48 ns. With 200,000
+resting orders, where the working set is 70 MB and no longer fits the TLB, the
+same code runs at 5.06 million with a median of 176 ns, and backing the arrays
+with 2 MB pages instead of 4 KB takes that from 3.85 to 6.24 million. Nothing about the algorithm changed between those
 two rows. The working set went from fitting in cache to not fitting, and a cancel
 went from costing slightly less than an add to costing 1.6 times as much, because
 a cancel begins with a hash lookup that has become a guaranteed miss.
@@ -77,6 +78,7 @@ Six binaries, each with `--help`:
 ./build/bench    --kernels --core=2
 ./build/replay   --data=data/raw
 ./build/sim      --data=data/raw --days=2026-08-13 --latency=0.1,1,10,100
+./build/ticktotrade --seconds=20 --feed-core=3 --engine-core=2
 ./build/itchgen  --days=2026-08-13 --out=results/eth.itch
 ./build/itchfeed --check --data=data/raw --days=2026-08-13 results/eth.itch
 ./build/mlgen    --days=2026-08-09 --out=results/queue_train.bin
@@ -238,15 +240,44 @@ to another. The "all operations" row pools adds, cancels and modifies.
 
 | resting orders | p50 | p90 | p99 | p99.9 | mean | throughput | through the ring |
 |---|---|---|---|---|---|---|---|
-| 2,000 | 48 ns | 85 ns | 206 ns | 464 ns | 64 ns | 16.71 M msg/s | 15.52 M msg/s |
-| 20,000 | 101 ns | 171 ns | 409 ns | 1,494 ns | 120 ns | 10.37 M msg/s | 9.58 M msg/s |
-| 60,000 | 148 ns | 276 ns | 543 ns | 6,174 ns | 189 ns | 6.11 M msg/s | 5.87 M msg/s |
-| 200,000 | 205 ns | 376 ns | 685 ns | 13,749 ns | 261 ns | 4.11 M msg/s | 4.02 M msg/s |
+| 2,000 | 48 ns | 84 ns | 189 ns | 458 ns | 63 ns | 17.01 M msg/s | 15.88 M msg/s |
+| 20,000 | 81 ns | 145 ns | 383 ns | 976 ns | 106 ns | 9.85 M msg/s | 8.79 M msg/s |
+| 60,000 | 131 ns | 251 ns | 506 ns | 7,836 ns | 167 ns | 8.00 M msg/s | 6.83 M msg/s |
+| 200,000 | 176 ns | 401 ns | 685 ns | 13,528 ns | 251 ns | 5.06 M msg/s | 5.12 M msg/s |
 
-The unloaded queue handoff does not depend on the book, and was measured once
-per row: p50 238, 139, 135 and 140 ns, p99 750, 189, 188 and 188 ns. The first is
-the cold one; take the number as roughly 140 ns with a first-touch outlier
-reported rather than dropped.
+### Huge pages, which is where most of the large book cost was
+
+At 200,000 resting orders the level table, the order pool and the id map come to
+about 70 MB. That is 17,000 pages of 4 KB against a data TLB with roughly a
+thousand entries, so a cancel pays a page walk on top of its cache miss and the
+benchmark measures the page tables as much as it measures the book.
+
+Same binary, same flow, one flag, 30 seconds each:
+
+| | p50 | mean | p99.9 | throughput |
+|---|---|---|---|---|
+| 4 KB pages | 203 ns | 271 ns | 15,929 ns | 3.85 M msg/s |
+| 2 MB pages | 128 ns | 183 ns | 11,238 ns | 6.24 M msg/s |
+| | **-37%** | **-32%** | **-29%** | **+62%** |
+
+`src/util/hugevec.hpp` maps the three arrays itself and asks for huge pages with
+`madvise`, rather than relying on a machine wide setting a reader may not be able
+to change. The first version of it rounded the mapping's *length* to a huge page
+and bought 14% where flipping the system setting bought 46%, which is what sent
+me looking: a huge page has to be backed at a huge page *boundary*, so a
+correctly sized mapping starting at an odd 4 KB offset still gets small pages.
+Over allocating by one page, aligning the start up and handing the slack back
+fixed it. `AnonHugePages` in `/proc/meminfo` confirms the mapping is really
+backed that way rather than only asking politely.
+
+Run to run spread on this VM is real: the same 200,000 configuration produced
+5.06 and 6.24 M msg/s in two 30 second runs half an hour apart. Treat the medians
+as solid and the throughput figures as plus or minus about 20%.
+
+The unloaded queue handoff does not depend on the book and was measured once per
+row: p50 between 130 and 238 ns, p99 between 180 and 750 ns. The high pair is the
+first, cold run; take it as roughly 135 ns with the cold outlier reported rather
+than dropped.
 
 Per operation, at the two ends of that range:
 
@@ -282,8 +313,8 @@ grow with the sample count.
 The throughput column is a separate phase with no timers in the loop at all:
 commands are generated into a block first, then the block is applied under one
 wall clock reading. It is the honest cost per message, and it agrees with the
-mean column to within the serialisation overhead (60 against 64 ns, 97 against
-120, 164 against 189, 243 against 261), which is the cross-check that the timed
+mean column to within the serialisation overhead (59 against 63 ns, 102 against
+106, 125 against 167, 198 against 251), which is the cross-check that the timed
 numbers are not measuring the timer.
 
 The pipeline column runs the feed on one pinned core and the matcher on another
@@ -300,7 +331,7 @@ which names both the reference it retires and the one that takes its place.
 
 **Caveats on these numbers.** This is a shared four vCPU cloud VM with a Haswell
 class host, a measured TSC of 2.4000 GHz, and no huge pages. CPU steal over the
-seven minute run was 93 ticks, about 0.2%. The medians and the throughput
+run was 156 ticks, about 0.2%. The medians and the throughput
 figures reproduce across runs; the maxima, which run to milliseconds, are
 scheduler noise and are reported rather than trimmed. Running anything else on
 the machine at the same time changes these numbers by a factor of several, which
@@ -393,6 +424,48 @@ Whole run: 14 seconds for 39 days on one core.
 
 ---
 
+## Tick to trade
+
+`tools/ticktotrade.cpp`.
+
+Everything above measures the engine. That is the part I wrote, and quoting it
+on its own would be misleading, because the number a trading firm actually cares
+about is wire to wire: from a market data packet arriving to the order it
+provoked leaving. This measures that over real UDP sockets on loopback, busy
+polled on both sides, pinned to separate cores, and breaks it into stages so the
+engine's share is visible rather than assumed.
+
+```
+./build/ticktotrade --seconds=20 --feed-core=3 --engine-core=2
+```
+
+286,255 round trips, none dropped:
+
+| stage | p50 | p99 | p99.9 |
+|---|---|---|---|
+| kernel in, `sendto` to `recvfrom` | 6,059 ns | 54,600 ns | 218,442 ns |
+| decode the packet | 69 ns | 414 ns | 1,030 ns |
+| apply to the book | 310 ns | 881 ns | 15,969 ns |
+| look at the book, decide | 9 ns | 28 ns | 101 ns |
+| kernel out, `sendto` | 5,574 ns | 27,227 ns | 109,214 ns |
+| **engine work in total** | **434 ns** | **1,264 ns** | **16,858 ns** |
+| **tick to trade** | **13,346 ns** | **54,600 ns** | **436,899 ns** |
+
+**At the median the code in this repository is 3.2% of the path.** The other 97%
+is the kernel network stack, twice. Making the engine twice as fast would move
+the total by 1.6%.
+
+That is the honest shape of the problem and it is why the industry buys network
+cards rather than compilers: the next order of magnitude is in kernel bypass,
+not in the book. There is no NIC here, no wire and no bypass, so 13.3 us is a
+floor on what a real path would cost rather than an estimate of one. A production
+system on the same shape of hardware with a bypass stack lands one to five
+microseconds wire to wire, and an FPGA feed handler lands well under one. This is
+not that, and the table is here so nobody has to take my word for which parts are
+fast.
+
+---
+
 ## The binary feed
 
 `src/wire/`, `tools/itchgen.cpp`, `tools/itchfeed.cpp`.
@@ -428,6 +501,7 @@ therefore plays both roles, and that is what makes two independent checks
 possible from one book.
 
 ```
+./build/ticktotrade --seconds=20 --feed-core=3 --engine-core=2
 ./build/itchgen  --days=2026-08-13 --out=results/eth.itch
 ./build/itchfeed --check --data=data/raw --days=2026-08-13 results/eth.itch
 ```
@@ -724,8 +798,14 @@ about a maker who already holds queue position.
   fix it. The 25 day extension set exists for that reason and agrees.
 - **The agent is assumed not to move the market.** At 0.5 ETH against a touch of
   a few hundred that is reasonable and still unverifiable.
-- **The engine benchmark runs on a shared four vCPU cloud VM** with a Haswell
-  class host and no huge pages. The medians are stable across runs; the maxima
+- **Everything here runs on a shared four vCPU KVM guest** with a Haswell class
+  host. There is no bare metal available to me, no isolated cores, no tuned
+  interrupt affinity and no kernel bypass. Huge pages are asked for in code and
+  do work; the rest of the tuning a real deployment does is absent. Run to run
+  throughput varies by about 20% on this box, which is reported rather than
+  hidden by quoting a best run.
+- **Tick to trade is measured on loopback, not on a network.** It is a floor,
+  not an estimate of a real path, and it is dominated by the kernel stack. The medians are stable across runs; the maxima
   are scheduler noise and are reported rather than trimmed. Concurrent work on
   the same machine changes these numbers by a factor of several, which is why the
   script asks for an idle box.
@@ -762,7 +842,7 @@ src/util/       gzip line reader, cpu pinning, cycle timing and histograms
 src/replay/     raw file parsing, reconstruction, fidelity binary
 src/sim/        fill model, agent, simulation binary
 bench/          engine and kernel benchmarks
-tools/          itchgen, itchfeed, mlgen, mltrain
+tools/          itchgen, itchfeed, mlgen, mltrain, ticktotrade
 tests/          six test binaries, run by ctest
 scripts/        run_bench.sh, run_experiment.sh, run_queue_model.sh, analyse.py,
                 skew_compare.py, compare_runs.py, tape_structure.py

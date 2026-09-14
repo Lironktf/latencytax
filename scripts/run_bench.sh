@@ -18,5 +18,25 @@ for ML in 2000 20000 60000 200000; do
   echo
 done
 
+# Same binary, same flow, one flag. The book's three big arrays come to about
+# 70 MB at this size, which is more pages than the data TLB has entries.
+echo "== huge pages, on and off, 200000 resting orders =="
+for HP in 0 1; do
+  echo "-- hugepages=$HP --"
+  ./build/bench --seconds="$SECONDS_PER_PHASE" --core="$CORE" --feed-core="$FEED_CORE" \
+    --max-live=200000 --hugepages="$HP" | tee "$OUT/bench_hp${HP}.txt" \
+    | grep -E 'book arrays|^all |single thread throughput'
+  echo
+done
+
+echo "== tick to trade, udp on loopback =="
+./build/ticktotrade --seconds=20 --feed-core="$FEED_CORE" --engine-core="$CORE" \
+  | tee "$OUT/ticktotrade.txt"
+echo
+
+echo "== ml kernels =="
+./build/bench --kernels --core="$CORE" | tee "$OUT/kernels.txt" | grep -v '^csv'
+echo
+
 S1=$(steal)
 echo "cpu steal during the run: $((S1-S0)) ticks"

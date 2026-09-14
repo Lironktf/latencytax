@@ -1,93 +1,160 @@
 == steady state book of 2000 resting orders ==
 host: 4 cpus, tsc 2.4000 GHz (measured against CLOCK_MONOTONIC)
-timer pair cost: p50 36 cycles (15.0 ns), subtracted from the latency table
+timer pair cost: p50 33 cycles (13.8 ns), subtracted from the latency table
+book arrays: 2 MB pages requested with madvise
 
 per operation latency, matcher pinned, 30 s of timed work
 operation                   count       p50       p90       p99     p99.9      mean       max
-add (rests)              71304415       50ns       83ns      195ns      454ns       65ns   3021.3us
-add (marketable)          8388129       49ns      128ns      305ns      621ns       78ns   1004.1us
-cancel                   71304411       45ns       74ns      184ns      426ns       58ns   2235.7us
-modify                   16775205       44ns      128ns      215ns      479ns       72ns   1443.9us
-all                     167772160       48ns       85ns      206ns      464ns       64ns   3021.3us
-book at end: 1882 resting orders (generator target 2000), best bid 19196 best ask 19198
-events: 12895539 trades, 78813018 accepts, 85539930 cancels, 5179678 rejects
+add (rests)              71749916       50ns       84ns      169ns      451ns       66ns   4512.0us
+add (marketable)          8440731       49ns      126ns      295ns      624ns       79ns   1820.5us
+cancel                   71749918       45ns       71ns      158ns      419ns       57ns   3445.2us
+modify                   16880171       43ns      123ns      208ns      470ns       71ns   2116.7us
+all                     168820736       48ns       84ns      189ns      458ns       63ns   4512.0us
+book at end: 1887 resting orders (generator target 2000), best bid 19196 best ask 19198
+events: 12973418 trades, 79287853 accepts, 86055136 cancels, 5210975 rejects
 
-single thread throughput: 16.71 M msg/s (59.9 ns/msg), 502267904 messages in 30.1 s
-  resting orders at end: 1877, trades: 37676079
+single thread throughput: 17.01 M msg/s (58.8 ns/msg), 510656512 messages in 30.0 s
+  resting orders at end: 1906, trades: 38297713
 
 feed thread -> spsc ring -> matcher, saturated, both pinned
-  end to end: 15.52 M msg/s over 30.0 s (465846272 messages, bulk push and pop)
+  end to end: 15.88 M msg/s over 30.0 s (476590080 messages, bulk push and pop)
 
 spsc handoff latency, unloaded (producer waits for the ring to drain)
-  9990000 samples: p50 238 ns  p99 750 ns  p99.9 16565 ns  max 1917.7 us
+  18711000 samples: p50 135 ns  p99 183 ns  p99.9 1688 ns  max 3372.3 us
 
 == steady state book of 20000 resting orders ==
 host: 4 cpus, tsc 2.4000 GHz (measured against CLOCK_MONOTONIC)
 timer pair cost: p50 36 cycles (15.0 ns), subtracted from the latency table
+book arrays: 2 MB pages requested with madvise
 
 per operation latency, matcher pinned, 30 s of timed work
 operation                   count       p50       p90       p99     p99.9      mean       max
-add (rests)              50358960      104ns      156ns      403ns     1601ns      120ns   2102.7us
-add (marketable)          5924352      104ns      236ns      604ns     5270ns      146ns    305.9us
-cancel                   50358959       79ns      175ns      385ns      893ns      115ns   2475.8us
-modify                   11846817      100ns      203ns      394ns     1545ns      125ns   1436.0us
-all                     118489088      101ns      171ns      409ns     1494ns      120ns   2475.8us
-book at end: 18821 resting orders (generator target 20000), best bid 19206 best ask 19208
-events: 9851470 trades, 56183873 accepts, 60617462 cancels, 4520001 rejects
+add (rests)              53477423      100ns      138ns      386ns     1259ns      110ns   2220.0us
+add (marketable)          6292375       98ns      209ns      531ns     3916ns      132ns   1798.6us
+cancel                   53477424       64ns      143ns      341ns      639ns       99ns   1436.3us
+modify                   12581898       64ns      181ns      353ns      910ns      111ns   1126.1us
+all                     125829120       81ns      145ns      383ns      976ns      106ns   2220.0us
+book at end: 18920 resting orders (generator target 20000), best bid 19181 best ask 19182
+events: 10427076 trades, 59491334 accepts, 64189884 cancels, 4779456 rejects
 
-single thread throughput: 10.37 M msg/s (96.5 ns/msg), 311427072 messages in 30.0 s
-  resting orders at end: 18860, trades: 25040142
+single thread throughput: 9.85 M msg/s (101.5 ns/msg), 295698432 messages in 30.0 s
+  resting orders at end: 18352, trades: 23785636
 
 feed thread -> spsc ring -> matcher, saturated, both pinned
-  end to end: 9.58 M msg/s over 30.0 s (287571968 messages, bulk push and pop)
+  end to end: 8.79 M msg/s over 30.0 s (263606272 messages, bulk push and pop)
 
 spsc handoff latency, unloaded (producer waits for the ring to drain)
-  18363000 samples: p50 139 ns  p99 189 ns  p99.9 2260 ns  max 961.6 us
+  16431000 samples: p50 135 ns  p99 455 ns  p99.9 6674 ns  max 2867.2 us
 
 == steady state book of 60000 resting orders ==
 host: 4 cpus, tsc 2.4000 GHz (measured against CLOCK_MONOTONIC)
 timer pair cost: p50 36 cycles (15.0 ns), subtracted from the latency table
+book arrays: 2 MB pages requested with madvise
 
 per operation latency, matcher pinned, 30 s of timed work
 operation                   count       p50       p90       p99     p99.9      mean       max
-add (rests)              37434977      136ns      206ns      464ns     3338ns      164ns   2699.5us
-add (marketable)          4403192      138ns      346ns      913ns     9775ns      202ns    294.6us
-cancel                   37434972      173ns      293ns      555ns     7750ns      206ns   3223.8us
-modify                    8807243      170ns      350ns      604ns    10311ns      218ns   1038.8us
-all                      88080384      148ns      276ns      543ns     6174ns      189ns   3223.8us
-book at end: 56378 resting orders (generator target 60000), best bid 19190 best ask 19191
-events: 8820745 trades, 41707758 accepts, 44170465 cancels, 5244204 rejects
+add (rests)              39663295      124ns      198ns      454ns     6226ns      155ns   2901.8us
+add (marketable)          4665113      138ns      316ns      794ns     9975ns      187ns    861.4us
+cancel                   39663296      139ns      278ns      518ns     7979ns      174ns   3066.6us
+modify                    9331560      148ns      314ns      555ns     9529ns      185ns    937.7us
+all                      93323264      131ns      251ns      506ns     7836ns      167ns   3066.6us
+book at end: 50379 resting orders (generator target 60000), best bid 19201 best ask 19202
+events: 9343975 trades, 44003802 accepts, 46592167 cancels, 5572990 rejects
 
-single thread throughput: 6.11 M msg/s (163.6 ns/msg), 183500800 messages in 30.0 s
-  resting orders at end: 56176, trades: 17828802
+single thread throughput: 8.00 M msg/s (124.9 ns/msg), 241172480 messages in 30.1 s
+  resting orders at end: 54790, trades: 23143640
 
 feed thread -> spsc ring -> matcher, saturated, both pinned
-  end to end: 5.87 M msg/s over 30.0 s (176160768 messages, bulk push and pop)
+  end to end: 6.83 M msg/s over 30.0 s (204836864 messages, bulk push and pop)
 
 spsc handoff latency, unloaded (producer waits for the ring to drain)
-  18638000 samples: p50 135 ns  p99 188 ns  p99.9 1098 ns  max 3118.5 us
+  5852000 samples: p50 400 ns  p99 941 ns  p99.9 17251 ns  max 1917.6 us
 
 == steady state book of 200000 resting orders ==
 host: 4 cpus, tsc 2.4000 GHz (measured against CLOCK_MONOTONIC)
 timer pair cost: p50 33 cycles (13.8 ns), subtracted from the latency table
+book arrays: 2 MB pages requested with madvise
 
 per operation latency, matcher pinned, 30 s of timed work
 operation                   count       p50       p90       p99     p99.9      mean       max
-add (rests)              29413161      159ns      275ns      580ns    11521ns      211ns   2715.9us
-add (marketable)          3459273      156ns      419ns     1161ns    14171ns      255ns   2344.3us
-cancel                   29413158      261ns      389ns      674ns    15599ns      298ns   3210.3us
-modify                    6920424      244ns      470ns      781ns    15806ns      315ns   2848.4us
-all                      69206016      205ns      376ns      685ns    13749ns      261ns   3210.3us
-book at end: 161165 resting orders (generator target 200000), best bid 19204 best ask 19205
-events: 9387818 trades, 32021498 accepts, 32434734 cancels, 7274832 rejects
+add (rests)              29859074      161ns      268ns      553ns    10910ns      204ns   2435.0us
+add (marketable)          3511341      158ns      415ns     1075ns    12773ns      244ns    981.6us
+cancel                   29859071      266ns      416ns      693ns    15581ns      285ns   3054.7us
+modify                    7025106      266ns      488ns      790ns    15740ns      308ns   4276.2us
+all                      70254592      176ns      401ns      685ns    13528ns      251ns   4276.2us
+book at end: 114869 resting orders (generator target 200000), best bid 19195 best ask 19196
+events: 9600743 trades, 32417624 accepts, 32839985 cancels, 7430084 rejects
 
-single thread throughput: 4.11 M msg/s (243.1 ns/msg), 123731968 messages in 30.1 s
-  resting orders at end: 140973, trades: 16389919
+single thread throughput: 5.06 M msg/s (197.8 ns/msg), 152043520 messages in 30.1 s
+  resting orders at end: 149651, trades: 20244842
 
 feed thread -> spsc ring -> matcher, saturated, both pinned
-  end to end: 4.02 M msg/s over 30.1 s (120848384 messages, bulk push and pop)
+  end to end: 5.12 M msg/s over 30.0 s (153616384 messages, bulk push and pop)
 
 spsc handoff latency, unloaded (producer waits for the ring to drain)
-  18323000 samples: p50 140 ns  p99 188 ns  p99.9 2369 ns  max 920.1 us
+  19122000 samples: p50 130 ns  p99 180 ns  p99.9 3666 ns  max 4028.3 us
 
-cpu steal during the run: 93 ticks
+== huge pages, on and off, 200000 resting orders ==
+-- hugepages=0 --
+book arrays: 4 KB pages, huge pages explicitly refused
+all                      67108864      203ns      395ns      708ns    15929ns      271ns   4582.6us
+single thread throughput: 3.85 M msg/s (259.8 ns/msg), 116391936 messages in 30.2 s
+
+-- hugepages=1 --
+book arrays: 2 MB pages requested with madvise
+all                      84934656      128ns      269ns      535ns    11238ns      183ns   3138.3us
+single thread throughput: 6.24 M msg/s (160.3 ns/msg), 187695104 messages in 30.1 s
+
+== tick to trade, udp on loopback ==
+tick to trade, udp on loopback, feed pinned to cpu 3 and engine to cpu 2
+tsc 2.4000 GHz, timer pair 33 cycles subtracted, 286255 packets sent, 286255 round trips measured (100.00% seen)
+
+  stage
+  kernel in, send to recv    p50     6059 ns   p99     54600 ns   p99.9    218442 ns   max  7042.9 us
+  decode the packet          p50       69 ns   p99       414 ns   p99.9      1030 ns   max   129.9 us
+  apply to the book          p50      310 ns   p99       881 ns   p99.9     15969 ns   max   468.2 us
+  look at the book, decide   p50        9 ns   p99        28 ns   p99.9       101 ns   max    62.7 us
+  kernel out, sendto         p50     5574 ns   p99     27227 ns   p99.9    109214 ns   max  4312.7 us
+  return leg (incl. sendto)  p50     5866 ns   p99     26969 ns   p99.9    109214 ns   max  4312.3 us
+
+  engine work, t1 to t5      p50      434 ns   p99      1264 ns   p99.9     16858 ns   max   468.4 us
+  tick to trade, t0 to t6    p50    13346 ns   p99     54600 ns   p99.9    436899 ns   max  7100.8 us
+
+  at the median, the part this repository wrote is 3.2% of the whole path (434 ns of 13346 ns)
+  the rest is the kernel network stack, twice. there is no NIC here and no
+  kernel bypass, so this is a floor on a real path rather than an estimate
+  of one.
+
+== ml kernels ==
+host: 4 cpus, tsc 2.4000 GHz (measured against CLOCK_MONOTONIC)
+timer pair cost: p50 39 cycles (16.3 ns), subtracted from the latency table
+book arrays: 2 MB pages requested with madvise
+
+ml kernels, AVX2 and FMA available
+
+  dot 64, vector                   6.86 ns/call     18.65 GFLOP/s  (67108864 reps)
+  dot 64, scalar                  50.97 ns/call      2.51 GFLOP/s  (16777216 reps)
+  dot speedup                      7.43x
+
+  axpy 64, vector                  6.07 ns/call     21.08 GFLOP/s  (67108864 reps)
+  axpy 64, scalar                  5.81 ns/call     22.03 GFLOP/s  (67108864 reps)
+  axpy speedup                     0.96x
+
+  gemv 32x64, row at a time      230.95 ns/call     17.74 GFLOP/s  (4194304 reps)
+  gemv 32x64, 4 rows blocked     200.81 ns/call     20.40 GFLOP/s  (4194304 reps)
+  gemv 32x64, scalar            1548.19 ns/call      2.65 GFLOP/s  (262144 reps)
+  gemv speedup                     7.71x over scalar,     1.15x from blocking alone
+
+  adam step 2048, vector        2497.01 ns/call      4.10 GFLOP/s  (262144 reps)
+  adam step 2048, scalar        7286.04 ns/call      1.41 GFLOP/s  (65536 reps)
+  adam speedup                     2.92x
+
+  logistic inference              19.74 ns/call      6.48 GFLOP/s  (67108864 reps)
+  mlp 64-32-1 inference          263.45 ns/call     15.79 GFLOP/s  (4194304 reps)
+  mlp 64-32-1 train step        2046.64 ns/call      6.10 GFLOP/s  (262144 reps)
+
+  peak for this core: AVX2 fused multiply add, 2 units x 8 lanes x 2 flops x 2.40 GHz = 76.8 GFLOP/s
+
+  (checksum 3.35544e+07, printed so nothing above is optimised away)
+
+cpu steal during the run: 156 ticks
