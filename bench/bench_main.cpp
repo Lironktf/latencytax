@@ -36,6 +36,9 @@
 #include <vector>
 
 #include "engine/engine.hpp"
+#include "ml/kernels.hpp"
+#include "ml/logistic.hpp"
+#include "ml/mlp.hpp"
 #include "util/affinity.hpp"
 #include "util/timing.hpp"
 
@@ -56,6 +59,7 @@ struct Args {
   double pct_marketable = 5.0;
   std::size_t max_live = 200000;
   bool csv = false;
+  bool kernels = false;
 };
 
 void usage() {
@@ -72,6 +76,7 @@ void usage() {
       "  --mix=a,c,m,t      percent add, cancel, modify, marketable (default 45,40,10,5)\n"
       "  --seed=N           flow generator seed\n"
       "  --csv              also print the table as csv\n"
+      "  --kernels          benchmark the ml kernels instead of the engine\n"
       "  --help\n");
 }
 
@@ -92,6 +97,7 @@ bool parse_args(int argc, char** argv, Args& a) {
     else if (num("--max-live=", d)) a.max_live = static_cast<std::size_t>(d);
     else if (num("--seed=", d)) a.seed = static_cast<std::uint64_t>(d);
     else if (s == "--csv") a.csv = true;
+    else if (s == "--kernels") a.kernels = true;
     else if (s.rfind("--mix=", 0) == 0) {
       if (std::sscanf(s.c_str() + 6, "%lf,%lf,%lf,%lf", &a.pct_add, &a.pct_cancel,
                       &a.pct_modify, &a.pct_marketable) != 4) {
@@ -106,6 +112,21 @@ bool parse_args(int argc, char** argv, Args& a) {
   }
   return true;
 }
+
+// Stops the compiler hoisting a loop invariant call out of a timing loop or
+// deleting it outright. The empty asm block is opaque to the optimiser, and the
+// memory clobber forces anything it might have cached in a register back out.
+//
+// This is not decoration. The first version of the kernel benchmark below timed
+// a dot product over two vectors that never changed, and reported 103 GFLOP/s
+// on a core whose AVX2 fused multiply add ceiling is 2 units times 8 lanes times
+// 2 flops times 2.4 GHz, or 76.8. A microbenchmark that reports a number above
+// the machine's peak is not a fast kernel, it is a deleted one.
+template <typename T>
+inline void do_not_optimize(T& value) {
+  asm volatile("" : "+r,m"(value) : : "memory");
+}
+inline void clobber() { asm volatile("" : : : "memory"); }
 
 enum class OpKind : int { AddRest = 0, AddMarketable, Cancel, Modify, Count };
 const char* kOpName[] = {"add (rests)", "add (marketable)", "cancel", "modify"};
@@ -292,6 +313,157 @@ int main(int argc, char** argv) {
   const double overhead = timer_cost.pct_cycles(50);
   std::printf("timer pair cost: p50 %.0f cycles (%.1f ns), subtracted from the latency table\n\n",
               overhead, overhead / ghz);
+
+  if (a.kernels) {
+    // The queue model runs inside the replay loop, once per resting quote per
+    // market event, so what matters is the cost of one 64 wide inference rather
+    // than peak throughput on a large batch. Each kernel is timed against its
+    // own scalar reference compiled from the same source.
+    using namespace ltx::ml;
+    std::printf("ml kernels, %s\n\n", LTX_HAVE_AVX2 ? "AVX2 and FMA available"
+                                                     : "no AVX2, scalar fallback");
+    std::mt19937_64 rng(1);
+    std::uniform_real_distribution<float> u(-1.0f, 1.0f);
+    std::vector<float> x(kDim), w(kDim), y(kDim);
+    for (auto& v : x) v = u(rng);
+    for (auto& v : w) v = u(rng);
+    for (auto& v : y) v = u(rng);
+    const std::size_t H = 32;
+    std::vector<float> W(H * kDim), out(H);
+    for (auto& v : W) v = u(rng);
+
+    // Budgeted by time rather than by a fixed repetition count, because the
+    // kernels here differ by two orders of magnitude in cost and one fixed
+    // count is either far too few for the cheap ones or minutes for the rest.
+    auto time_it = [&](const char* name, double flops, auto&& fn) {
+      for (int i = 0; i < 50000; ++i) fn();     // warm up
+      std::size_t reps = 4096;
+      double t = 0;
+      while (true) {
+        const double t0 = now_s();
+        for (std::size_t i = 0; i < reps; ++i) fn();
+        t = now_s() - t0;
+        if (t > 0.35) break;
+        reps *= 4;
+      }
+      std::printf("  %-28s %8.2f ns/call   %7.2f GFLOP/s  (%zu reps)\n", name,
+                  t / reps * 1e9, flops * reps / t / 1e9, reps);
+      return t / reps * 1e9;
+    };
+
+    float sink = 0.0f;
+    const float* wp = w.data();
+    const float* xp = x.data();
+    float* yp = y.data();
+    const float* Wp = W.data();
+    float* outp = out.data();
+
+    const double d_simd = time_it("dot 64, vector", 2.0 * kDim, [&] {
+      do_not_optimize(wp);
+      do_not_optimize(xp);
+      float r = dot(wp, xp, kDim);
+      do_not_optimize(r);
+      sink += r;
+    });
+    const double d_scalar = time_it("dot 64, scalar", 2.0 * kDim, [&] {
+      do_not_optimize(wp);
+      do_not_optimize(xp);
+      float r = scalar::dot(wp, xp, kDim);
+      do_not_optimize(r);
+      sink += r;
+    });
+    std::printf("  %-28s %8.2fx\n\n", "dot speedup", d_scalar / d_simd);
+
+    const double a_simd = time_it("axpy 64, vector", 2.0 * kDim, [&] {
+      do_not_optimize(yp);
+      do_not_optimize(xp);
+      axpy(yp, xp, 1e-8f, kDim);
+      clobber();
+    });
+    const double a_scalar = time_it("axpy 64, scalar", 2.0 * kDim, [&] {
+      do_not_optimize(yp);
+      do_not_optimize(xp);
+      scalar::axpy(yp, xp, 1e-8f, kDim);
+      clobber();
+    });
+    std::printf("  %-28s %8.2fx\n\n", "axpy speedup", a_scalar / a_simd);
+
+    const double g_row = time_it("gemv 32x64, row at a time", 2.0 * H * kDim, [&] {
+      do_not_optimize(Wp);
+      do_not_optimize(xp);
+      do_not_optimize(outp);
+      gemv_rowwise(Wp, xp, outp, H, kDim);
+      clobber();
+    });
+    const double g_simd = time_it("gemv 32x64, 4 rows blocked", 2.0 * H * kDim, [&] {
+      do_not_optimize(Wp);
+      do_not_optimize(xp);
+      do_not_optimize(outp);
+      gemv(Wp, xp, outp, H, kDim);
+      clobber();
+    });
+    const double g_scalar = time_it("gemv 32x64, scalar", 2.0 * H * kDim, [&] {
+      do_not_optimize(Wp);
+      do_not_optimize(xp);
+      do_not_optimize(outp);
+      scalar::gemv(Wp, xp, outp, H, kDim);
+      clobber();
+    });
+    std::printf("  %-28s %8.2fx over scalar, %8.2fx from blocking alone\n\n",
+                "gemv speedup", g_scalar / g_simd, g_row / g_simd);
+
+    // The Adam step was the slowest thing in the model before it was widened:
+    // a square root and a division per weight, neither of which pipelines with
+    // anything when it sits alone in a scalar loop body.
+    std::vector<float> aw(H * kDim), am(H * kDim, 0.0f), av(H * kDim, 0.0f), ag(H * kDim);
+    for (auto& v : aw) v = u(rng);
+    for (auto& v : ag) v = u(rng);
+    float* awp = aw.data();
+    float* amp = am.data();
+    float* avp = av.data();
+    const float* agp = ag.data();
+    const double ad_simd = time_it("adam step 2048, vector", 5.0 * H * kDim, [&] {
+      do_not_optimize(awp);
+      do_not_optimize(agp);
+      adam_step(awp, amp, avp, agp, 0.9f, 0.999f, 1e-3f, 1e-8f, H * kDim);
+      clobber();
+    });
+    const double ad_scalar = time_it("adam step 2048, scalar", 5.0 * H * kDim, [&] {
+      do_not_optimize(awp);
+      do_not_optimize(agp);
+      scalar::adam_step(awp, amp, avp, agp, 0.9f, 0.999f, 1e-3f, 1e-8f, H * kDim);
+      clobber();
+    });
+    std::printf("  %-28s %8.2fx\n\n", "adam speedup", ad_scalar / ad_simd);
+
+    FtrlLogistic lg({}, kDim);
+    lg.finalise();
+    Mlp mlp({}, kDim);
+    time_it("logistic inference", 2.0 * kDim, [&] {
+      do_not_optimize(xp);
+      float r = lg.predict_fixed(xp);
+      do_not_optimize(r);
+      sink += r;
+    });
+    time_it("mlp 64-32-1 inference", 2.0 * (H * kDim + H), [&] {
+      do_not_optimize(xp);
+      float r = mlp.predict(xp);
+      do_not_optimize(r);
+      sink += r;
+    });
+    time_it("mlp 64-32-1 train step", 6.0 * (H * kDim + H), [&] {
+      do_not_optimize(xp);
+      const float p = mlp.predict(xp);
+      mlp.update(xp, p, 1.0f);
+      clobber();
+    });
+    std::printf("\n  peak for this core: AVX2 fused multiply add, 2 units x 8 lanes"
+                " x 2 flops x %.2f GHz = %.1f GFLOP/s\n",
+                ghz, 2.0 * 8.0 * 2.0 * ghz);
+    std::printf("\n  (checksum %g, printed so nothing above is optimised away)\n",
+                static_cast<double>(sink));
+    return 0;
+  }
 
   const Tick mid = 19160;
   std::vector<Command> block(a.block);

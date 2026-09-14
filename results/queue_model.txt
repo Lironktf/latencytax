@@ -1,0 +1,51 @@
+train results/queue_train.bin: 828828 samples over 4 days
+  fit 621624, validation 207204 (day index >= 3)
+test  results/queue_test.bin: 1035984 samples over 5 days
+  horizon 30000 ms, 64 features
+
+positive rate: fit 0.2534
+
+positive rate: fit 0.2534  validation 0.3244  test 0.2456
+the rate moves between periods, so a model has to be recalibrated rather than trusted as is
+
+validation day
+  base rate      n=   207204  logloss 0.64282  brier 0.22423  auc 0.5000
+  one feature    n=   207204  logloss 0.61891  brier 0.21209  auc 0.6419
+
+logistic: 18 configurations searched on the validation day
+  chosen alpha 0.020  l1 2.00  l2 2.00  (validation logloss 0.63785)
+  logistic       n=   207204  logloss 0.63785  brier 0.21133  auc 0.6772
+
+mlp: 4 configurations, epochs stopped on the validation day
+  chosen hidden 32  lr 0.0010  epochs 1  (validation logloss 0.67738)
+  mlp            n=   207204  logloss 0.67738  brier 0.22751  auc 0.6437
+
+Platt scaling fitted on the validation day: one feature a=0.842 b=0.219, logistic a=0.673 b=0.278, mlp a=0.886 b=0.789
+
+test set, scored once
+  base rate      n=  1035984  logloss 0.55763  brier 0.18535  auc 0.5000
+  one feature    n=  1035984  logloss 0.53203  brier 0.17555  auc 0.6754
+  logistic       n=  1035984  logloss 0.52132  brier 0.17074  auc 0.7001
+  mlp            n=  1035984  logloss 0.52760  brier 0.17147  auc 0.6585
+  logistic keeps 57 of 64 coordinates non zero under L1
+
+  calibration, ten equal width bins of predicted probability
+    bin               count  predicted     actual
+    0.0-0.1            2963     0.0762     0.1012
+    0.1-0.2          236206     0.1641     0.1140
+    0.2-0.3          299628     0.2475     0.1703
+    0.3-0.4          217072     0.3474     0.2485
+    0.4-0.5          151994     0.4457     0.3378
+    0.5-0.6           78381     0.5442     0.4557
+    0.6-0.7           41736     0.6468     0.6775
+    0.7-0.8            8004     0.7161     0.8633
+
+  per day on the test set (logistic, recalibrated)
+    day             n  positives    logloss      auc
+    0          207204     0.2923    0.56556   0.6710
+    1          207192     0.2811    0.54264   0.7029
+    2          207192     0.1272    0.43755   0.7367
+    3          207192     0.2705    0.53979   0.6946
+    4          207204     0.2570    0.52105   0.7152
+
+wrote results/queue_model.bin

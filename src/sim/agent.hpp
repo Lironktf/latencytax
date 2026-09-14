@@ -20,6 +20,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <cstdint>
 #include <deque>
 #include <vector>
@@ -68,6 +69,15 @@ class Agent {
   explicit Agent(const AgentConfig& c) : c_(c) {}
 
   const AgentConfig& config() const { return c_; }
+
+  // An optional veto on joining a level. The market making simulation uses it
+  // to ask the trained queue model whether the quantity already resting at that
+  // price is likely to trade away inside the model's horizon, and to stand
+  // aside when it is not. Called only when a quote is actually placed, which is
+  // rare compared with the events the agent sees.
+  using Gate = std::function<bool(Side, Tick, Qty level_size)>;
+  void set_gate(Gate g) { gate_ = std::move(g); }
+  std::uint64_t gated() const { return gated_; }
   Qty inventory() const { return inv_; }
   double cash() const { return cash_; }
   const std::vector<Fill>& fills() const { return fills_; }
@@ -224,6 +234,11 @@ class Agent {
       return;
     }
     if (q.live && q.tick == tick) return;  // already there, keep the queue slot
+    if (gate_ && !gate_(side, tick, level_size)) {
+      q.live = false;
+      ++gated_;
+      return;
+    }
     ++requotes_;
     q = RestingQuote{};
     q.live = true;
@@ -296,6 +311,8 @@ class Agent {
   double maker_notional_ = 0, taker_notional_ = 0;
   std::uint64_t maker_fills_ = 0, swept_fills_ = 0;
   std::uint64_t requotes_ = 0;
+  std::uint64_t gated_ = 0;
+  Gate gate_;
   std::size_t pending_hw_ = 0;
 
   bool have_mid_ = false;

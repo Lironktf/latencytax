@@ -1,19 +1,25 @@
 # latencytax
 
-A limit order book and matching engine in C++20, a replay that reconstructs the
+A limit order book and matching engine in C++20; an ITCH 5.0 style binary feed
+and a sharded feed handler that drive it; a replay that reconstructs the
 Hyperliquid ETH-perp book from raw snapshots and checks the engine against the
-exchange's own data, and a market making simulation inside that replay that
-measures what reaction latency is worth.
+exchange's own data; and a market making simulation inside that replay that
+measures what reaction latency is worth and what a learned queue model is worth.
 
-Three things came out of it.
+About 9,600 lines of C++20, of which 1,900 are tests, with no dependency outside
+the standard library and zlib. Four things came out of it.
 
-**The engine is correct against 25.6 million level comparisons.** Replaying 39
-days of ETH-perp through it, the reconstructed top-20 book matches the exchange's
-next published snapshot on every one of 25,570,480 compared level positions, over
-639,262 five-second windows and 24,183,264 engine commands. Zero mismatches, zero
-unexpected trades. The reconstruction that drives the engine is computed from the
-raw files alone and never reads engine state, so this is a check on the engine
-rather than a tautology.
+**The engine is correct against 25.6 million level comparisons, twice, by two
+different paths.** Replaying 39 days of ETH-perp, the reconstructed top-20 book
+matches the exchange's next published snapshot on every one of 25,570,480
+compared level positions, over 639,262 five-second windows and 24,183,264 engine
+commands. Then the same 39 days are encoded as 24,078,404 ITCH 5.0 messages in
+MoldUDP64 packets, parsed back big endian out of the wire by a feed handler that
+shares no code with the replay above the book itself, and scored again: 0 wrong
+of 25,572,280. Zero mismatches and zero unexpected trades on both paths. The
+reconstruction that drives the engine is computed from the raw files alone and
+never reads engine state, so this is a check on the engine rather than a
+tautology.
 
 **The engine's speed depends on the size of the book, and the numbers say by how
 much.** With 2,000 resting orders it runs at 17.13 million messages per second
@@ -34,10 +40,24 @@ at all between 1 ms and 30 ms: Hyperliquid batches into blocks and there is
 nothing inside one to react to. A cost does appear at second scale, +0.000085 bps
 per millisecond between 1 s and 5 s, 95% CI [+0.000048, +0.000133].
 
-That last result is a negative one for the question as posed, and it was
+**Queue clearing is predictable, and predicting it cuts adverse selection.** The
+fill model in the experiment above assumes a constant where a market maker wants
+a per level opinion, and the constant has an AUC of 0.5 by construction. A
+logistic regression over 64 features, trained with FTRL-Proximal on hand written
+AVX2 kernels, reaches **AUC 0.7001** on 1,035,984 holdout samples for whether the
+queue in front of an order trades away within 30 seconds. Wired into the agent as
+a veto on joining a level, out of sample: the share of fills that come from the
+tape running through the agent's price falls from 44.0% to 24.8%, 95% CI
+[-0.353, -0.107], and the 5 second markout improves by 0.179 bps, 95% CI [+0.050,
++0.447]. The hand written neural network beside it **loses** to the linear model
+and is reported as such.
+
+The latency result is a negative one for the question as posed, and it was
 pre-registered as the likely outcome before the holdout was opened. The
 pre-registration, its two amendments and the results are in
-[experiments/001_latency_tax](experiments/001_latency_tax).
+[experiments/001_latency_tax](experiments/001_latency_tax); the queue model is in
+[experiments/002_queue_model](experiments/002_queue_model), which was not
+pre-registered and says so at the top.
 
 ---
 
@@ -50,19 +70,25 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Three binaries, each with `--help`:
+Six binaries, each with `--help`:
 
 ```
-./build/bench   --seconds=30 --core=2 --feed-core=3 --max-live=2000
-./build/replay  --data=data/raw
-./build/sim     --data=data/raw --days=2026-08-13 --latency=0.1,1,10,100
+./build/bench    --seconds=30 --core=2 --feed-core=3 --max-live=2000
+./build/bench    --kernels --core=2
+./build/replay   --data=data/raw
+./build/sim      --data=data/raw --days=2026-08-13 --latency=0.1,1,10,100
+./build/itchgen  --days=2026-08-13 --out=results/eth.itch
+./build/itchfeed --check --data=data/raw --days=2026-08-13 results/eth.itch
+./build/mlgen    --days=2026-08-09 --out=results/queue_train.bin
+./build/mltrain  --train=results/queue_train.bin --test=results/queue_test.bin
 ```
 
-Two scripts reproduce everything quoted here:
+Three scripts reproduce everything quoted here:
 
 ```
-./scripts/run_bench.sh        # the engine tables, about 7 minutes
-./scripts/run_experiment.sh   # fidelity, calibration, holdout, extension, about two minutes
+./scripts/run_bench.sh         # the engine tables, about 7 minutes
+./scripts/run_experiment.sh    # fidelity, calibration, holdout, extension, about two minutes
+./scripts/run_queue_model.sh   # the queue model and the gated agent, about three minutes
 ```
 
 A debug build turns on the address and undefined behaviour sanitizers. The lock
@@ -132,9 +158,7 @@ place where that limit changes what a number means, it is said again.
 
 ## The matching engine
 
-`src/engine/`, about 1,000 lines including comments. The whole repository is
-about 5,000 lines of C++ with no dependency outside the standard library and
-zlib.
+`src/engine/`, about 1,250 lines including comments.
 
 Price levels live in one contiguous array indexed directly by tick. A level is 24
 bytes: resting quantity, order count, and the head and tail of its FIFO queue.
@@ -359,6 +383,197 @@ Whole run: 14 seconds for 39 days on one core.
 
 ---
 
+## The binary feed
+
+`src/wire/`, `tools/itchgen.cpp`, `tools/itchfeed.cpp`.
+
+The replay hands the engine a C++ struct. A venue hands it bytes off a socket,
+big endian, unaligned, framed, with a sequence number and a gap to notice if one
+goes missing. This is that path, and the point of building it is that the same
+39 days go down both and have to land on the same book.
+
+**What is faithful.** The order messages are byte for byte ITCH 5.0: Add Order,
+Add Order with MPID, Order Executed, Order Executed With Price, Order Cancel,
+Order Delete, Order Replace and Trade, at 36, 40, 31, 36, 23, 19, 35 and 44
+bytes, each behind the 11 byte header of type, stock locate, tracking number and
+a 48 bit timestamp. Prices are four implied decimals in a `uint32`. Framing is
+MoldUDP64: a 20 byte header of session, sequence number and message count, then
+length prefixed message blocks.
+
+**What is not, and why.** ITCH's Stock Directory is 39 bytes of equity specific
+fields with no meaning for a perpetual future. Rather than reuse the `R` type
+code with a different body, which is the kind of thing that bites a reader later,
+there is a separate lowercase `z` Symbol Directory carrying the symbol and the
+two scales. ITCH has no lowercase type codes, so there is no collision. The
+session timestamp counts from the start of the session's first day rather than
+from midnight, because this collector partitions files by receive time and the
+first few records of a file can carry a venue timestamp from just before
+midnight; counting from midnight would wrap the field mid session.
+
+**Three engine operations exist for this path and not for matching.** A market
+data feed reports what happened rather than asking for something: `Reduce` for
+Order Cancel, `Execute` for Order Executed, `Replace` for Order Replace. All
+three keep queue position, because none of them is a new order. The engine
+therefore plays both roles, and that is what makes two independent checks
+possible from one book.
+
+```
+./build/itchgen  --days=2026-08-13 --out=results/eth.itch
+./build/itchfeed --check --data=data/raw --days=2026-08-13 results/eth.itch
+```
+
+One day is 601,407 messages in 13,634 packets, 18.1 MB, 31.5 bytes per message.
+All 39 days is 24,078,404 messages and 718 MB.
+
+| | |
+|---|---|
+| **ITCH path against the exchange snapshots, 39 days** | **0 wrong of 25,572,280 level positions** |
+| decode alone | 53.5 M msg/s, 18.7 ns/msg, 1,604 MB/s |
+| decode and apply, one thread | 6.92 M msg/s |
+| sequence gaps, malformed packets | 0, 0 |
+
+The count differs slightly from the struct path's 25,570,480 because this scores
+every snapshot including the six that bound a feed gap, which the replay skips.
+
+### What building it turned up
+
+The first full run came back with 1,160 wrong level positions out of 25.5
+million, 0.0045%, and a single day had been clean. The failures were on exactly
+six days, with exactly 200 wrong on five of them, and those six days were exactly
+the six in the dataset that contain a feed gap.
+
+The cause: when the book is reseeded after a gap, the deletes that retire
+everything the wire believes is resting were stamped with the last event *before*
+the hole rather than with the snapshot that replaces the book. That put the
+teardown and the rebuild on opposite sides of a snapshot boundary, so a reader
+scoring itself against that snapshot saw a book that had already been emptied.
+Giving `on_reseed` the timestamp it belongs to fixed it, and the remaining 38
+days were unaffected either way.
+
+### Multi symbol and sharding
+
+Every ITCH message carries the symbol index in its header, including the ones
+that otherwise name only an order reference. That is not decoration: it means a
+router never has to look up which symbol an order belongs to, so routing is a
+field read at a fixed offset and a modulo, and a symbol lives entirely inside one
+shard for the whole session.
+
+Because of that, the books cannot depend on how many shards there are, and the
+tool checks it rather than asserting it. `itchgen --symbols=8` writes the same
+day under eight symbol codes with disjoint order references, 4,811,267 messages
+and 144 MB, and `itchfeed --digest` prints an order independent digest per
+symbol:
+
+| shards | threads | throughput | digests |
+|---|---|---|---|
+| 1 | 1 (decode and apply together) | 6.92 M msg/s | all eight identical |
+| 2 | 3 (one feed, two shards) | 17.56 M msg/s | all eight identical |
+| 3 | 4 (one feed, three shards) | 23.34 M msg/s | all eight identical |
+
+All eight symbols produce `a9c76d5cf301191a` at every shard count, which is also
+the digest of the single symbol run. The jump from one to two shards is more than
+double because the single threaded row decodes and applies on one core while the
+sharded rows add a dedicated feed thread; three shards saturates this four vCPU
+box.
+
+The eight symbol file is a load and isolation fixture, not more market data, and
+no fidelity number is ever quoted on it.
+
+---
+
+## The queue model
+
+`src/ml/`, `tools/mlgen.cpp`, `tools/mltrain.cpp`. Full account in
+[experiments/002_queue_model](experiments/002_queue_model).
+
+The fill model in the latency experiment contains one parameter that is an
+assumption rather than a measurement: what share of cancellations happen ahead of
+the agent in the queue. There is no ground truth for that. But there is ground
+truth for the half of the same question that only involves trading, and that half
+is the one that produces fills:
+
+> An order joins a price level at time t with quantity q resting in front of it.
+> Within the next 30 seconds, does enough volume trade at that price to work
+> through q?
+
+That is read straight off the tape, with no simulation and no fill model in
+between. 828,828 training samples over the calibration days, 1,035,984 over the
+holdout.
+
+**Everything is written from scratch.** AVX2 kernels with a scalar reference
+beside each one, FTRL-Proximal logistic regression, and a 64 to 32 to 1 MLP whose
+forward and backward passes are hand derived and checked against central
+differences. No library is involved at any point.
+
+| model | log loss | Brier | AUC |
+|---|---|---|---|
+| the constant the fill model assumes | 0.55763 | 0.18535 | 0.5000 |
+| one feature | 0.53203 | 0.17555 | 0.6754 |
+| **logistic, 64 features** | **0.52132** | **0.17074** | **0.7001** |
+| mlp, 64-32-1 | 0.52761 | 0.17147 | 0.6584 |
+
+Three things there are worth stating rather than leaving to be noticed. Most of
+the signal is one ratio: a logistic on `log1p(q / consuming volume over the last
+30 s)` alone gets 0.6754, and the other 63 features are worth 0.0247 of AUC
+between them. Per day AUC on the holdout runs 0.671 to 0.737 with no bad day,
+across days whose base rate moves by a factor of 2.3. And **the neural network
+loses**, on every metric, at every width and learning rate searched; the bucket
+indicators in the feature expansion already give the linear model the one bend
+the problem needs.
+
+### Used for something
+
+The agent asks the model, before joining a level, whether the quantity already
+resting there is likely to trade away, and stands aside when the answer is below
+a threshold chosen on the calibration days. Paired by day over the holdout:
+
+| | ungated | gated | difference | 95% CI |
+|---|---|---|---|---|
+| swept share of fills | 0.4397 | 0.2481 | **-0.1916** | **[-0.3530, -0.1072]** |
+| markout 1 s, bps | -0.4208 | -0.2353 | **+0.1854** | **[+0.0726, +0.4356]** |
+| markout 5 s, bps | -0.4937 | -0.3148 | **+0.1789** | **[+0.0502, +0.4467]** |
+| markout 30 s, bps | -0.6507 | -0.5732 | +0.0775 | [-0.1079, +0.4180] |
+| net edge, bps | -2.6412 | -2.4583 | +0.1829 | [-0.1590, +0.5768] |
+| fills | 1,451 | 1,701 | | |
+
+It takes more fills, not fewer, and the ones it takes are less often the
+adversely selected kind. Net edge is still negative, because a 1.5 bps maker fee
+against a 0.265 bps half spread is not a queue selection problem.
+
+The latency conclusion survives the model: the gated agent's headline slope is
++0.000693 bps/ms, 95% CI [-0.001182, +0.002322], still crossing zero, and still
+bit identical at 0.1, 1, 10 and 33 ms.
+
+### Kernels
+
+```
+./build/bench --kernels --core=2
+```
+
+| kernel | scalar | vector | speedup |
+|---|---|---|---|
+| dot, 64 | 50.08 ns | 6.42 ns | 7.80x |
+| axpy, 64 | 5.69 ns | 5.54 ns | 1.03x |
+| gemv, 32 by 64 | 1534.40 ns | 176.13 ns | 8.71x |
+| Adam step, 2048 weights | 7883.66 ns | 2547.04 ns | 3.10x |
+
+`axpy` gets nothing from vectorisation and that is correct: two reads and a write
+for two flops per element is bound by memory bandwidth, not arithmetic. It is in
+the table because a kernel table where everything is faster is a table whose
+entries were chosen. Blocking the matrix vector product four rows at a time is
+worth 1.24x on top of what vectorising the inner product gave, and the benchmark
+reports the unblocked vector version too so the two are not conflated.
+
+**The first version of this table reported the dot product at 103 GFLOP/s.** This
+core's AVX2 ceiling is 76.8. Both input vectors were loop invariant, so the
+compiler hoisted the call out of the timing loop; accumulating into a checksum
+stops a call being deleted but does nothing to stop it being hoisted. The
+benchmark now puts an optimisation barrier on the inputs and the result inside
+the timed lambda, and prints the machine's peak under the table so the next
+impossible number is obvious.
+
+---
+
 ## The experiment
 
 Pre-registered before the simulator was written:
@@ -504,9 +719,21 @@ about a maker who already holds queue position.
   are scheduler noise and are reported rather than trimmed. Concurrent work on
   the same machine changes these numbers by a factor of several, which is why the
   script asks for an idle box.
-- **The engine is single instrument and single threaded by design.** There is no
-  cross-book risk, no self-trade prevention, no order lifecycle beyond what is
-  listed, and no persistence.
+- **The engine has no risk layer.** No cross-book risk, no self-trade
+  prevention, no position or credit limits, no order lifecycle beyond what is
+  listed, and no persistence. A single book is single threaded; the feed handler
+  shards across books, not within one.
+- **The binary feed is generated from this data, not captured from a venue.**
+  The message layouts follow ITCH 5.0 and the framing follows MoldUDP64, but the
+  content is the Hyperliquid reconstruction re-encoded. It exercises a real
+  parser against a real format; it is not a NASDAQ capture and is not presented
+  as one. The eight symbol file is one day duplicated under eight codes, which
+  tests isolation and throughput and nothing about market structure.
+- **The queue model predicts trading, not cancelling.** It measures the half of
+  queue dynamics that has ground truth in an L2 feed. The cancellation share the
+  fill model assumes is still assumed, and experiment 002 does not fix that.
+- **Experiment 002 was not pre-registered.** 001 was. 002 says so at the top of
+  its design document and lists every time its test set was scored and why.
 - **This is a backtest.** It is not evidence of live profitability and nothing
   here places an order anywhere.
 
@@ -515,15 +742,21 @@ about a maker who already holds queue position.
 ## Layout
 
 ```
-src/engine/     types, events, order book, id map, spsc ring, command dispatch
+src/engine/     types, events, order book, id map, spsc ring, command dispatch,
+                multi symbol books
+src/wire/       big endian access, ITCH 5.0 layouts, MoldUDP64 framing, decoder,
+                sharded sequencer
+src/ml/         AVX2 kernels with scalar references, FTRL logistic, MLP,
+                features, dataset format, model loader
 src/util/       gzip line reader, cpu pinning, cycle timing and histograms
 src/replay/     raw file parsing, reconstruction, fidelity binary
 src/sim/        fill model, agent, simulation binary
-bench/          engine benchmark
-tests/          four test binaries, run by ctest
-scripts/        run_bench.sh, run_experiment.sh, analyse.py, skew_compare.py,
-                tape_structure.py
+bench/          engine and kernel benchmarks
+tools/          itchgen, itchfeed, mlgen, mltrain
+tests/          six test binaries, run by ctest
+scripts/        run_bench.sh, run_experiment.sh, run_queue_model.sh, analyse.py,
+                skew_compare.py, compare_runs.py, tape_structure.py
 experiments/    pre-registration, amendments, results
-results/        everything the two scripts produce
+results/        everything the three scripts produce
 docs/           a longer write up of the latency result
 ```

@@ -1,0 +1,166 @@
+== 1. datasets ==
+
+results/queue_train.bin
+  samples            828828 (113.8 MB)
+  positives          224727 (27.11%)
+  horizon            30 s
+  days               4
+
+results/queue_test.bin
+  samples            1035984 (142.3 MB)
+  positives          254455 (24.56%)
+  horizon            30 s
+  days               5
+
+== 2. train, with every choice made on the validation day ==
+train results/queue_train.bin: 828828 samples over 4 days
+  fit 621624, validation 207204 (day index >= 3)
+test  results/queue_test.bin: 1035984 samples over 5 days
+  horizon 30000 ms, 64 features
+
+positive rate: fit 0.2534
+
+positive rate: fit 0.2534  validation 0.3244  test 0.2456
+the rate moves between periods, so a model has to be recalibrated rather than trusted as is
+
+validation day
+  base rate      n=   207204  logloss 0.64282  brier 0.22423  auc 0.5000
+  one feature    n=   207204  logloss 0.61891  brier 0.21209  auc 0.6419
+
+logistic: 18 configurations searched on the validation day
+  chosen alpha 0.020  l1 2.00  l2 2.00  (validation logloss 0.63785)
+  logistic       n=   207204  logloss 0.63785  brier 0.21133  auc 0.6772
+
+mlp: 4 configurations, epochs stopped on the validation day
+  chosen hidden 32  lr 0.0010  epochs 1  (validation logloss 0.67738)
+  mlp            n=   207204  logloss 0.67738  brier 0.22751  auc 0.6437
+
+Platt scaling fitted on the validation day: one feature a=0.842 b=0.219, logistic a=0.673 b=0.278, mlp a=0.886 b=0.789
+
+test set, scored once
+  base rate      n=  1035984  logloss 0.55763  brier 0.18535  auc 0.5000
+  one feature    n=  1035984  logloss 0.53203  brier 0.17555  auc 0.6754
+  logistic       n=  1035984  logloss 0.52132  brier 0.17074  auc 0.7001
+  mlp            n=  1035984  logloss 0.52760  brier 0.17147  auc 0.6585
+  logistic keeps 57 of 64 coordinates non zero under L1
+
+  calibration, ten equal width bins of predicted probability
+    bin               count  predicted     actual
+    0.0-0.1            2963     0.0762     0.1012
+    0.1-0.2          236206     0.1641     0.1140
+    0.2-0.3          299628     0.2475     0.1703
+    0.3-0.4          217072     0.3474     0.2485
+    0.4-0.5          151994     0.4457     0.3378
+    0.5-0.6           78381     0.5442     0.4557
+    0.6-0.7           41736     0.6468     0.6775
+    0.7-0.8            8004     0.7161     0.8633
+
+  per day on the test set (logistic, recalibrated)
+    day             n  positives    logloss      auc
+    0          207204     0.2923    0.56556   0.6710
+    1          207192     0.2811    0.54264   0.7029
+    2          207192     0.1272    0.43755   0.7367
+    3          207192     0.2705    0.53979   0.6946
+    4          207204     0.2570    0.52105   0.7152
+
+wrote results/queue_model.bin
+
+== 3. gate threshold, chosen on the calibration days ==
+gate=0.0      1.00   5.00    0    3  0.00008   1.00      1027   49.2%       702598   -196.06   -2.7905   -0.5184   -0.8780
+gate=0.10      1.00   5.00    0    3  0.00008   1.00      1052   48.1%       711090   -207.06   -2.9119   -0.5110   -1.0114
+gate=0.20      1.00   5.00    0    3  0.00008   1.00      1164   39.9%       705631   -221.25   -3.1355   -0.4630   -1.1837
+gate=0.30      1.00   5.00    0    3  0.00008   1.00      1292   31.2%       706364   -200.66   -2.8407   -0.3515   -0.6022
+gate=0.40      1.00   5.00    0    3  0.00008   1.00      1253   26.5%       619337   -174.20   -2.8127   -0.2427   -0.8300
+gate=0.50      1.00   5.00    0    3  0.00008   1.00       793   28.8%       392780   -111.09   -2.8282   -0.3395   -1.3282
+gate=0.60      1.00   5.00    0    3  0.00008   1.00       431   22.7%       182795    -85.91   -4.6997   -0.1833   -0.4277
+
+== 4. the gated agent on the holdout, latency swept ==
+configuration: gamma=5.0 offset=0 requote=3 kappa=1.0  maker fee 1.5 bps
+days: 5  (2026-08-13 .. 2026-08-18)
+
+  latency    fills     notional    net_pnl  edge_bps            [95% CI]     mo1s     mo5s    mo30s   mo300s
+     0.10     1701       713979    -175.52   -2.4583 [ -3.1964, -2.0811]  -0.2353  -0.3148  -0.5732  -0.3669
+     1.00     1701       713979    -175.52   -2.4583 [ -3.1964, -2.0811]  -0.2353  -0.3148  -0.5732  -0.3669
+    10.00     1701       713979    -175.52   -2.4583 [ -3.1964, -2.0811]  -0.2353  -0.3148  -0.5732  -0.3669
+    33.00     1701       713979    -175.52   -2.4583 [ -3.1964, -2.0811]  -0.2353  -0.3148  -0.5732  -0.3669
+    66.00     1685       729074    -183.06   -2.5108 [ -3.2474, -2.1332]  -0.2517  -0.3337  -0.6267  -0.3744
+   100.00     1748       741499    -187.41   -2.5275 [ -3.1905, -2.2487]  -0.2223  -0.2983  -0.5405  -0.2973
+   200.00     1659       728894    -188.94   -2.5922 [ -3.4685, -2.0280]  -0.2357  -0.3174  -0.6133  -0.4136
+   500.00     1780       772717    -198.04   -2.5628 [ -3.5294, -2.1915]  -0.2701  -0.3575  -0.5553  -0.4306
+  1000.00     1813       805854    -214.04   -2.6561 [ -3.2200, -2.3181]  -0.2730  -0.3740  -0.5884  -0.7628
+  2000.00     1907       872827    -227.25   -2.6036 [ -3.3182, -2.2113]  -0.3132  -0.4103  -0.5957  -0.5724
+  5000.00     1952      1037356    -290.83   -2.8036 [ -3.5282, -2.3613]  -0.4836  -0.5589  -0.8610  -0.7792
+
+paired difference against the 0.1 ms baseline, bootstrap over 5 days, 10000 draws
+  latency    d_pnl_usd                 [95% CI]  d_edge_bps               [95% CI]
+     1.00        0.000 [     0.000,     0.000]      0.0000 [   0.0000,   0.0000]
+    10.00        0.000 [     0.000,     0.000]      0.0000 [   0.0000,   0.0000]
+    33.00        0.000 [     0.000,     0.000]      0.0000 [   0.0000,   0.0000]
+    66.00       -1.508 [    -2.634,    -0.382]     -0.0525 [  -0.2351,   0.0676]
+   100.00       -2.379 [    -4.137,    -0.477]     -0.0692 [  -0.2319,   0.1180]
+   200.00       -2.685 [    -6.427,     1.057]     -0.1339 [  -0.3325,   0.1302]
+   500.00       -4.503 [    -8.192,    -1.573]     -0.1045 [  -0.4156,   0.1656]
+  1000.00       -7.705 [   -10.449,    -4.961]     -0.1978 [  -0.4845,   0.0406]
+  2000.00      -10.345 [   -15.630,    -5.061]     -0.1452 [  -0.3357,   0.0254]
+  5000.00      -23.063 [   -31.434,   -16.423]     -0.3453 [  -0.4897,  -0.1691]
+
+HEADLINE  latency tax over 0.1 to 100.0 ms
+  +0.000693 bps of notional per ms   95% CI [-0.001182, +0.002322]
+  (positive means edge is lost as latency rises)
+  interval crosses zero
+
+first latency with a paired PnL loss significant at 95%: 66 ms
+slope over 1000.0 to 5000.0 ms: +0.000037 bps per ms  95% CI [-0.000060, +0.000091]
+  paired PnL over the same range: -15.358 USD  95% CI [-23.017, -8.480]
+
+hourly block bootstrap, 120 blocks, 10000 draws
+  latency    d_pnl_usd                 [95% CI]
+     1.00        0.000 [     0.000,     0.000]
+    10.00        0.000 [     0.000,     0.000]
+    33.00        0.000 [     0.000,     0.000]
+    66.00       -5.754 [   -17.267,     5.299]
+   100.00      -10.612 [   -26.232,     4.054]
+   200.00      -12.077 [   -30.041,     6.481]
+   500.00      -18.159 [   -37.849,     1.364]
+  1000.00      -32.131 [   -53.756,   -10.664]
+  2000.00      -48.944 [   -74.022,   -24.349]
+  5000.00     -106.171 [  -142.675,   -71.699]
+
+== 5. gated against ungated, paired by day ==
+ungated vs gated: gamma=5.0 requote=3 latency=0.1 ms, 5 days, 10000 draws
+                metric      ungated        gated   difference                 [95% CI]
+        markout 1s bps      -0.4208      -0.2353       0.1854 [    0.0726,    0.4356]
+        markout 5s bps      -0.4937      -0.3148       0.1789 [    0.0502,    0.4467]
+       markout 30s bps      -0.6507      -0.5732       0.0775 [   -0.1079,    0.4180]
+      markout 300s bps      -0.6867      -0.3669       0.3198 [   -0.4874,    1.7533]
+  swept share of fills       0.4397       0.2481      -0.1916 [   -0.3530,   -0.1072]
+              edge bps      -2.6412      -2.4583       0.1829 [   -0.1590,    0.5768]
+
+                 fills         1451         1701
+           net pnl usd      -215.21      -175.52
+
+== 6. kernels ==
+host: 4 cpus, tsc 2.4000 GHz (measured against CLOCK_MONOTONIC)
+timer pair cost: p50 36 cycles (15.0 ns), subtracted from the latency table
+
+ml kernels, AVX2 and FMA available
+
+  dot 64, vector                   1.24 ns/call    103.20 GFLOP/s  (1073741824 reps)
+  dot 64, scalar                   9.03 ns/call     14.17 GFLOP/s  (67108864 reps)
+  dot speedup                      7.28x
+
+  axpy 64, vector                  3.30 ns/call     38.75 GFLOP/s  (268435456 reps)
+  axpy 64, scalar                  3.40 ns/call     37.69 GFLOP/s  (268435456 reps)
+  axpy speedup                     1.03x
+
+  gemv 32x64, vector             179.84 ns/call     22.78 GFLOP/s  (4194304 reps)
+  gemv 32x64, scalar            1499.50 ns/call      2.73 GFLOP/s  (262144 reps)
+  gemv speedup                     8.34x
+
+  logistic inference              18.56 ns/call      6.90 GFLOP/s  (67108864 reps)
+  mlp 64-32-1 inference          285.08 ns/call     14.59 GFLOP/s  (4194304 reps)
+  mlp 64-32-1 train step        1989.53 ns/call      6.27 GFLOP/s  (262144 reps)
+
+  (checksum 3.35544e+07, printed so nothing above is optimised away)
+
+all outputs are under results/

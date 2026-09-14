@@ -18,9 +18,13 @@ target_include_directories(ltx_flags INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 option(LTX_NATIVE "Build with -march=native" ON)
 
+# -march=native applies to every build type, not just Release. The hand written
+# kernels in src/ml compile to a scalar fallback without it, and a sanitizer
+# build that quietly tests the fallback instead of the code that ships is worse
+# than no sanitizer build at all.
 target_compile_options(ltx_flags INTERFACE
+  $<$<BOOL:${LTX_NATIVE}>:-march=native>
   $<$<CONFIG:Release>:-O3>
-  $<$<AND:$<CONFIG:Release>,$<BOOL:${LTX_NATIVE}>>:-march=native>
   $<$<CONFIG:Release>:-fno-omit-frame-pointer>
   $<$<CONFIG:Debug>:-O0>
   $<$<CONFIG:Debug>:-g>
@@ -69,10 +73,16 @@ target_link_libraries(itchgen PRIVATE ltx_engine ltx_data ltx_wire)
 add_executable(itchfeed tools/itchfeed.cpp)
 target_link_libraries(itchfeed PRIVATE ltx_engine ltx_data ltx_wire)
 
+add_executable(mlgen tools/mlgen.cpp)
+target_link_libraries(mlgen PRIVATE ltx_engine ltx_data)
+
+add_executable(mltrain tools/mltrain.cpp)
+target_link_libraries(mltrain PRIVATE ltx_engine ltx_data)
+
 
 include(CTest)
 enable_testing()
-foreach(t test_order_book test_spsc test_id_map test_reconstruct test_wire)
+foreach(t test_order_book test_spsc test_id_map test_reconstruct test_wire test_ml)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE ltx_engine ltx_data ltx_wire)
   add_test(NAME ${t} COMMAND ${t})

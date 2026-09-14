@@ -1,0 +1,11 @@
+ungated vs gated: gamma=5.0 requote=3 latency=0.1 ms, 5 days, 10000 draws
+                metric      ungated        gated   difference                 [95% CI]
+        markout 1s bps      -0.4208      -0.2353       0.1854 [    0.0726,    0.4356]
+        markout 5s bps      -0.4937      -0.3148       0.1789 [    0.0502,    0.4467]
+       markout 30s bps      -0.6507      -0.5732       0.0775 [   -0.1079,    0.4180]
+      markout 300s bps      -0.6867      -0.3669       0.3198 [   -0.4874,    1.7533]
+  swept share of fills       0.4397       0.2481      -0.1916 [   -0.3530,   -0.1072]
+              edge bps      -2.6412      -2.4583       0.1829 [   -0.1590,    0.5768]
+
+                 fills         1451         1701
+           net pnl usd      -215.21      -175.52

@@ -20,6 +20,8 @@
 #include "engine/engine.hpp"
 #include "replay/loader.hpp"
 #include "replay/reconstruct.hpp"
+#include "ml/features.hpp"
+#include "ml/model.hpp"
 #include "sim/agent.hpp"
 #include "util/gzline.hpp"
 
@@ -42,6 +44,8 @@ struct Args {
   std::string kappas = "1.0";
   std::string requotes = "0";
   std::string sweep = "through";
+  std::string queue_model;
+  double gate = 0.0;
   double size_eth = 0.5;
   double max_inv_eth = 25.0;
   double k = 1.5;
@@ -73,6 +77,8 @@ void usage() {
       "  --kappa=LIST        share of cancellations taken to be ahead, default 1.0\n"
       "  --requote=LIST      ticks of drift tolerated before giving up queue position\n"
       "  --sweep=through|queue  what a print through the quote price does, default through\n"
+      "  --queue-model=FILE  trained queue model, used to veto joining a level\n"
+      "  --gate=P            skip a level whose predicted fill probability is below P\n"
       "  --size=N            quote size in ETH, default 0.5\n"
       "  --max-inv=N         inventory limit in ETH, default 25\n"
       "  --k=N               AS order arrival decay, default 1.5\n"
@@ -131,6 +137,8 @@ bool parse_args(int argc, char** argv, Args& a) {
     else if (str("--kappa=", a.kappas)) {}
     else if (str("--requote=", a.requotes)) {}
     else if (str("--sweep=", a.sweep)) {}
+    else if (str("--queue-model=", a.queue_model)) {}
+    else if (num("--gate=", a.gate)) {}
     else if (str("--csv=", a.csv)) {}
     else if (str("--fills-csv=", a.fills_csv)) {}
     else if (str("--hourly-csv=", a.hourly_csv)) {}
@@ -154,6 +162,11 @@ class SimObserver final : public ReplayObserver {
  public:
   explicit SimObserver(std::vector<Agent>& agents) : agents_(agents) {}
 
+  // Kept up to date from the same event stream the engine sees, so a feature
+  // can never contain anything the agent could not have known.
+  ltx::ml::MarketState& market_state() { return ms_; }
+  std::int64_t now_ms() const { return now_ms_; }
+
   void on_snapshot(const Snapshot& s, const OrderBook& book) override {
     // `agents_` is non-const here because the marks read agent state.
     if (!book.has_bid() || !book.has_ask()) return;
@@ -162,6 +175,8 @@ class SimObserver final : public ReplayObserver {
     const Qty bq = book.qty_at(bb);
     const Qty aq = book.qty_at(ba);
     const std::int64_t us = s.time_ms * 1000;
+    ms_.on_snapshot(s);
+    now_ms_ = s.time_ms;
     mid_ts_.push_back(s.time_ms);
     mid_px_.push_back(0.5 * (static_cast<double>(bb) + static_cast<double>(ba)) * 0.1);
     for (Agent& a : agents_) {
@@ -195,6 +210,8 @@ class SimObserver final : public ReplayObserver {
     const Qty bq = book.qty_at(book.best_bid());
     const Qty aq = book.qty_at(book.best_ask());
     const std::int64_t us = t.time_ms * 1000;
+    ms_.on_trade(t);
+    now_ms_ = t.time_ms;
     for (Agent& a : agents_) a.on_print(us, t.aggressor, t.tick, t.qty, bq, aq);
   }
 
@@ -216,6 +233,8 @@ class SimObserver final : public ReplayObserver {
 
  private:
   std::vector<Agent>& agents_;
+  ltx::ml::MarketState ms_;
+  std::int64_t now_ms_ = 0;
   std::vector<std::int64_t> mid_ts_;
   std::vector<double> mid_px_;
   std::vector<HourMark> marks_;
@@ -516,6 +535,15 @@ int main(int argc, char** argv) {
                 "off", "rq", "fills", "swept%", "notional", "edge_bps", "mo1s", "mo5s", "mo30s");
   }
 
+  ltx::ml::QueueModel model;
+  if (!a.queue_model.empty()) {
+    if (!model.load(a.queue_model)) {
+      std::fprintf(stderr, "cannot load queue model %s\n", a.queue_model.c_str());
+      return 1;
+    }
+    std::printf("queue model %s loaded, gate %.3f\n", a.queue_model.c_str(), a.gate);
+  }
+
   std::vector<Row> all;
   for (const std::string& day : days) {
     LoadStats bs{}, ts{};
@@ -535,6 +563,28 @@ int main(int argc, char** argv) {
     Reconstructor rec(eng);
     SimObserver obs(agents);
     rec.set_observer(&obs);
+    if (model.loaded()) {
+      // The model is asked about the quantity already resting at the level,
+      // which is exactly what a new order would have to get through.
+      for (Agent& ag : agents) {
+        ag.set_gate([&obs, &model, &a](Side side, Tick tick, Qty level_size) {
+          if (level_size <= 0) return true;
+          if (!obs.market_state().ready()) return true;
+          ltx::ml::Query q;
+          q.side = side;
+          q.tick = tick;
+          q.level_eth = static_cast<double>(level_size) / kQtyScale;
+          q.orders = 1;
+          q.q_eth = q.level_eth;
+          const Snapshot& sn = obs.market_state().snapshot();
+          const Tick touch = side == Side::Buy ? sn.bids[0].tick : sn.asks[0].tick;
+          q.offset_ticks = static_cast<int>(side == Side::Buy ? touch - tick : tick - touch);
+          if (q.offset_ticks < 0) q.offset_ticks = 0;
+          return model.predict(obs.market_state(), q, obs.now_ms()) >=
+                 static_cast<float>(a.gate);
+        });
+      }
+    }
     const ReplayStats rs = rec.run(snaps, trades);
     if (rs.total.recon_level_mismatch != 0) {
       std::fprintf(stderr, "%s: replay fidelity broke, %u level mismatches\n", day.c_str(),
