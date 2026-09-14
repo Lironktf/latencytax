@@ -55,6 +55,9 @@ target_link_libraries(bench PRIVATE ltx_engine)
 add_executable(replay src/replay/replay_main.cpp)
 target_link_libraries(replay PRIVATE ltx_engine ltx_data)
 
+add_executable(sim src/sim/sim_main.cpp)
+target_link_libraries(sim PRIVATE ltx_engine ltx_data)
+
 
 include(CTest)
 enable_testing()

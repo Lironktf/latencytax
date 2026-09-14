@@ -199,3 +199,54 @@ is reported at both so the reader can see whether it changes the answer.
   there.
 - A backtest is not evidence of live profitability, and nothing here places an
   order anywhere.
+
+---
+
+## Amendment 1, 2026-09-14
+
+Made after writing the simulator and after exploratory runs on the calibration
+days, and before any run on any holdout day. No holdout day had been loaded by
+the simulator at the time this was written.
+
+Four changes.
+
+1. The gamma grid is rescaled to {0, 5, 20} from {0, 0.05, 0.2, 1.0}. The
+   original numbers were written before the volatility units were computed. On
+   the calibration days the exponentially weighted standard deviation of the mid
+   over one 5 second interval is about 0.012 USD, so at tau = 60 s the inventory
+   term gamma * inventory * sigma^2 * tau is worth about 0.0044 USD per ETH of
+   inventory per unit of gamma. At the original top of the grid, gamma = 1.0, a
+   maximum 25 ETH position would skew the reservation price by 0.11 USD, about
+   one tick. The grid could not have distinguished any skew setting from no skew
+   at all. The rescaled grid spans 0 to about 5.5 ticks of skew at the inventory
+   limit. Three values instead of four, to hold the grid size down.
+
+2. A parameter is added to the agent: requote_ticks, the drift in ticks the
+   agent tolerates before it cancels a resting quote and rejoins at a new price.
+   Grid {0, 1, 3}. Reason: the spread on this instrument is one tick 99.8% of
+   the time and the touch holds a few hundred ETH, so an agent that re-pegs
+   every time the touch moves is permanently at the back of a queue it never
+   advances through. In an exploratory calibration run, 73% of that agent's
+   fills came from the tape trading through its price, which is the adversely
+   selected subset. Whether to hold queue position is a real decision a market
+   maker makes and the experiment should not assume it away. A quote that has
+   become crossable, or that the inventory limit says to pull, is still acted on
+   immediately regardless of this parameter.
+
+3. The fill model's treatment of a print at a better price than the resting
+   order is promoted from an implementation detail to a reported sensitivity,
+   with two rules, Through and Queue, defined in src/sim/fill_model.hpp. Through
+   is the primary. Neither is verifiable from an L2 feed. The holdout is reported
+   under both.
+
+4. beta is fixed at the value from the calibration regression rather than left
+   free: 0.00008052 USD per ETH of decayed signed volume, from 69,117 snapshot
+   pairs over the four calibration days, correlation +0.01816, r-squared
+   0.00033. The grid keeps {0, 0.00008052}.
+
+Calibration grid after these changes: gamma {0, 5, 20} x offset {0, 1} x
+requote {0, 1, 3} x beta {0, 0.00008052} = 36 points, selected on pooled net
+edge in basis points over the four calibration days. The holdout is then run
+once at the selected point. The latency curve is also reported for the runner up
+configurations, so that the reader can see whether the conclusion about latency
+depends on which agent was picked.

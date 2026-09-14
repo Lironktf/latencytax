@@ -51,6 +51,9 @@ void Reconstructor::seed(const Snapshot& s) {
 }
 
 void Reconstructor::apply_trade(const RawTrade& t, WindowStats& w) {
+  // The observer sees the print before the book has been changed by it, which
+  // is what a participant with a resting order at that price would see.
+  if (obs_) obs_->on_trade_print(t, eng_.book());
   ++w.trades;
   w.tape_qty += t.qty;
   now_ns_ = t.time_ms * 1000000;
@@ -82,8 +85,6 @@ void Reconstructor::apply_trade(const RawTrade& t, WindowStats& w) {
   // Engine: the same print as a marketable immediate or cancel order.
   submit(Command{now_ns_, ++taker_seq_, t.qty, t.tick, CmdType::AddLimit,
                  t.aggressor, Tif::Ioc, 0});
-
-  if (obs_) obs_->on_trade_print(t, eng_.book());
 }
 
 void Reconstructor::reconcile(const Snapshot& target, WindowStats& w) {
