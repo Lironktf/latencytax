@@ -198,76 +198,96 @@ void Reconstructor::score(const Snapshot& target, std::uint32_t& mismatch,
   }
 }
 
+void Reconstructor::push_snapshot(const Snapshot& s) {
+  if (!started_) {
+    outer_sink_ = eng_.book().sink();
+    seed(s);
+    open_ = s;
+    win_ = WindowStats{};
+    started_ = true;
+    if (obs_) obs_->on_snapshot(s, eng_.book());
+    return;
+  }
+
+  if (s.time_ms - open_.time_ms > max_window_ms_) {
+    // A hole in the feed. Reseed and score nothing across it.
+    ++live_.windows_skipped_gap;
+    seed(s);
+    open_ = s;
+    win_ = WindowStats{};
+    if (obs_) obs_->on_snapshot(s, eng_.book());
+    return;
+  }
+
+  score(s, win_.tape_level_mismatch, win_.tape_levels_compared, &win_.tape_top5_abs_err,
+        &win_.tape_top5_ref);
+
+  TradeCounter counter(outer_sink_);
+  eng_.book().set_sink(&counter);
+  reconcile(s, win_);
+  eng_.book().set_sink(outer_sink_);
+  win_.recon_unexpected_trades = counter.trades;
+
+  score(s, win_.recon_level_mismatch, win_.recon_levels_compared, nullptr, nullptr);
+
+  ++live_.windows;
+  live_.total.trades += win_.trades;
+  live_.total.trades_no_liquidity += win_.trades_no_liquidity;
+  live_.total.tape_qty += win_.tape_qty;
+  live_.total.matched_qty += win_.matched_qty;
+  live_.total.swept_better_qty += win_.swept_better_qty;
+  live_.total.tape_level_mismatch += win_.tape_level_mismatch;
+  live_.total.tape_levels_compared += win_.tape_levels_compared;
+  live_.total.tape_top5_abs_err += win_.tape_top5_abs_err;
+  live_.total.tape_top5_ref += win_.tape_top5_ref;
+  live_.total.recon_level_mismatch += win_.recon_level_mismatch;
+  live_.total.recon_levels_compared += win_.recon_levels_compared;
+  live_.total.recon_unexpected_trades += win_.recon_unexpected_trades;
+  live_.total.adds += win_.adds;
+  live_.total.cancels += win_.cancels;
+  live_.total.modifies += win_.modifies;
+  if (win_.recon_level_mismatch) ++live_.windows_with_recon_mismatch;
+  if (win_.tape_level_mismatch) ++live_.windows_with_tape_mismatch;
+  live_.commands = commands_;
+  if (keep_per_window_) per_window_.push_back(win_);
+
+  open_ = s;
+  win_ = WindowStats{};
+  if (obs_) obs_->on_snapshot(s, eng_.book());
+}
+
+void Reconstructor::push_trade(const RawTrade& t) {
+  if (!started_) return;
+  apply_trade(t, win_);
+}
+
 ReplayStats Reconstructor::run(const std::vector<Snapshot>& snaps,
                                const std::vector<RawTrade>& trades) {
-  ReplayStats st;
-  if (snaps.size() < 2) return st;
+  // Written in terms of the incremental calls above, so the batch replay and
+  // the live shadow are the same code rather than two implementations that have
+  // to be kept in agreement.
+  if (snaps.size() < 2) return ReplayStats{};
   per_window_.clear();
   commands_ = 0;
-
-  EventSink* const outer = eng_.book().sink();
-  TradeCounter counter(outer);
+  started_ = false;
+  live_ = ReplayStats{};
 
   std::size_t ti = 0;
-  seed(snaps[0]);
-  if (obs_) obs_->on_snapshot(snaps[0], eng_.book());
+  push_snapshot(snaps[0]);
+  while (ti < trades.size() && trades[ti].time_ms <= snaps[0].time_ms) ++ti;
 
-  for (std::size_t i = 0; i + 1 < snaps.size(); ++i) {
-    const Snapshot& a = snaps[i];
-    const Snapshot& b = snaps[i + 1];
-    while (ti < trades.size() && trades[ti].time_ms <= a.time_ms) ++ti;
-
-    if (b.time_ms - a.time_ms > max_window_ms_) {
-      // Feed gap. Reseed and score nothing across the hole.
-      ++st.windows_skipped_gap;
-      while (ti < trades.size() && trades[ti].time_ms <= b.time_ms) ++ti;
-      seed(b);
-      if (obs_) obs_->on_snapshot(b, eng_.book());
-      continue;
-    }
-
-    WindowStats w;
-    while (ti < trades.size() && trades[ti].time_ms <= b.time_ms) {
-      apply_trade(trades[ti], w);
+  for (std::size_t i = 1; i < snaps.size(); ++i) {
+    const bool gap = snaps[i].time_ms - snaps[i - 1].time_ms > max_window_ms_;
+    while (ti < trades.size() && trades[ti].time_ms <= snaps[i].time_ms) {
+      // Prints inside a hole in the feed are dropped rather than applied to a
+      // book that is about to be thrown away and rebuilt.
+      if (!gap) push_trade(trades[ti]);
       ++ti;
     }
-    score(b, w.tape_level_mismatch, w.tape_levels_compared, &w.tape_top5_abs_err,
-          &w.tape_top5_ref);
-
-    // The reconciliation must not produce trades. If it does, the engine and
-    // the shadow model disagree about what is resting.
-    const std::uint64_t before = counter.trades;
-    eng_.book().set_sink(&counter);
-    reconcile(b, w);
-    eng_.book().set_sink(outer);
-    w.recon_unexpected_trades = counter.trades - before;
-
-    score(b, w.recon_level_mismatch, w.recon_levels_compared, nullptr, nullptr);
-
-    ++st.windows;
-    st.total.trades += w.trades;
-    st.total.trades_no_liquidity += w.trades_no_liquidity;
-    st.total.tape_qty += w.tape_qty;
-    st.total.matched_qty += w.matched_qty;
-    st.total.swept_better_qty += w.swept_better_qty;
-    st.total.tape_level_mismatch += w.tape_level_mismatch;
-    st.total.tape_levels_compared += w.tape_levels_compared;
-    st.total.tape_top5_abs_err += w.tape_top5_abs_err;
-    st.total.tape_top5_ref += w.tape_top5_ref;
-    st.total.recon_level_mismatch += w.recon_level_mismatch;
-    st.total.recon_levels_compared += w.recon_levels_compared;
-    st.total.recon_unexpected_trades += w.recon_unexpected_trades;
-    st.total.adds += w.adds;
-    st.total.cancels += w.cancels;
-    st.total.modifies += w.modifies;
-    if (w.recon_level_mismatch) ++st.windows_with_recon_mismatch;
-    if (w.tape_level_mismatch) ++st.windows_with_tape_mismatch;
-    if (keep_per_window_) per_window_.push_back(w);
-
-    if (obs_) obs_->on_snapshot(b, eng_.book());
+    push_snapshot(snaps[i]);
   }
-  st.commands = commands_;
-  return st;
+  live_.commands = commands_;
+  return live_;
 }
 
 }  // namespace ltx

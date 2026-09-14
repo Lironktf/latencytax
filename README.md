@@ -6,8 +6,8 @@ Hyperliquid ETH-perp book from raw snapshots and checks the engine against the
 exchange's own data; and a market making simulation inside that replay that
 measures what reaction latency is worth and what a learned queue model is worth.
 
-About 12,000 lines of C++20, of which 2,400 are tests, with no dependency outside
-the standard library and zlib. Five things came out of it.
+About 14,000 lines of C++20, of which 2,800 are tests, with no dependency outside
+the standard library and zlib. Six things came out of it.
 
 **The engine is correct against 25.6 million level comparisons, twice, by two
 different paths.** Replaying 39 days of ETH-perp, the reconstructed top-20 book
@@ -51,6 +51,12 @@ at all between 1 ms and 30 ms: Hyperliquid batches into blocks and there is
 nothing inside one to react to. A cost does appear at second scale, +0.000085 bps
 per millisecond between 1 s and 5 s, 95% CI [+0.000048, +0.000133].
 
+**It runs on the live market, in shadow, and checks itself while it does.** The
+same engine and the same reconstruction, pointed at Hyperliquid's WebSocket, with
+a page to watch on. It places no orders and holds no key. Every time a snapshot
+closes a window it makes the same comparison against the exchange's own book that
+the 39 day replay makes, and shows the running count of disagreements.
+
 **Queue clearing is predictable, and predicting it cuts adverse selection.** The
 fill model in the experiment above assumes a constant where a market maker wants
 a per level opinion, and the constant has an AUC of 0.5 by construction. A
@@ -81,7 +87,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Six binaries, each with `--help`:
+Ten binaries, each with `--help`:
 
 ```
 ./build/bench    --seconds=30 --core=2 --feed-core=3 --max-live=2000
@@ -94,6 +100,15 @@ Six binaries, each with `--help`:
 ./build/itchfeed --check --data=data/raw --days=2026-08-13 results/eth.itch
 ./build/mlgen    --days=2026-08-09 --out=results/queue_train.bin
 ./build/mltrain  --train=results/queue_train.bin --test=results/queue_test.bin
+```
+
+Six scripts, beyond the three that reproduce the numbers above:
+
+```
+./scripts/run_live.sh          # the live shadow, then open http://localhost:8080
+./scripts/run_determinism.sh   # one input, six configurations, one hash per symbol
+./scripts/run_fuzz.sh          # four libFuzzer targets under ASan and UBSan
+python3 scripts/latency_svg.py # redraw the latency figure from the measurement
 ```
 
 Three scripts reproduce everything quoted here:
@@ -442,6 +457,64 @@ far the book moves between snapshots, and it is the reason the market making
 simulation models queue position explicitly instead of reading it off the book.
 
 Whole run: 14 seconds for 39 days on one core.
+
+---
+
+## The live shadow
+
+`scripts/live_bridge.py`, `tools/liveshadow.cpp`.
+
+Everything above is a replay of files. This is the same engine, the same
+reconstruction and the same market making agent, pointed at Hyperliquid's live
+WebSocket, with a page to watch it on.
+
+```
+pip install websockets
+./scripts/run_live.sh          # then open http://localhost:8080
+```
+
+**It places no orders.** The bridge opens a market data socket and sends two
+subscribe messages. There is no key anywhere in this repository and nothing here
+can reach an order entry endpoint. The quotes on the page are quotes the agent
+would have posted; the fills are what the queue model says would have happened to
+them. It is a simulation standing next to a live market, not participation in
+one.
+
+The bridge is 90 lines of Python doing exactly one job: TLS and the WebSocket
+handshake, which are not worth a dependency in the C++ tree to avoid. It reshapes
+each message into the same line the collectors write, so the C++ side cannot tell
+whether it is reading today's market or a file from August:
+
+```
+B {"rx": 1789428953160, "book": {"coin":"ETH","time":...,"levels":[[...],[...]]}}
+T {"rx": 1789428953171, "trade": {"coin":"ETH","side":"A","px":"2517.5",...}}
+```
+
+That is not a coincidence, it is the point. `Reconstructor::run` was rewritten in
+terms of two incremental calls, `push_snapshot` and `push_trade`, and the live
+path calls the same two. There is one implementation of the reconstruction, not
+one for files and one for sockets, and the whole 39 day fidelity result was
+re-run afterwards to confirm it had not moved by a single command: 639,262
+windows, 24,183,264 commands, 0 of 25,570,480 level positions wrong.
+
+**The reconstruction checks itself live.** Every time a snapshot closes a window,
+the same comparison the replay makes is made against the exchange's own book, and
+the page shows the running count. If it stops being zero while you are watching,
+something is wrong and you can watch it happen.
+
+A sample of what it reports, from a run against the live feed:
+
+```json
+{"uptime_s": 25.0, "books": 5, "trades": 103, "parse_errors": 0,
+ "windows": 4, "recon_mismatch": 0, "unexpected_trades": 0,
+ "best_bid": 2514.6, "best_ask": 2514.7,
+ "agent_bid": 2514.6, "agent_ask": 2515.7,
+ "inventory": -0.5, "fills": 3, "swept": 3, "equity": -1.19071}
+```
+
+The page is served by about 80 lines of socket code inside the tool, refreshes
+once a second, follows the reader's colour scheme, and pulls nothing from the
+network. It runs on your machine and is not hosted anywhere.
 
 ---
 
@@ -979,8 +1052,10 @@ about a maker who already holds queue position.
   fill model assumes is still assumed, and experiment 002 does not fix that.
 - **Experiment 002 was not pre-registered.** 001 was. 002 says so at the top of
   its design document and lists every time its test set was scored and why.
-- **This is a backtest.** It is not evidence of live profitability and nothing
-  here places an order anywhere.
+- **This is a backtest, and the live shadow is a simulation standing next to a
+  live market.** Neither is evidence of live profitability, and nothing here
+  places an order anywhere. The live tool holds no key and opens only a market
+  data socket.
 
 ---
 
@@ -997,10 +1072,14 @@ src/util/       gzip line reader, cpu pinning, cycle timing and histograms
 src/replay/     raw file parsing, reconstruction, fidelity binary
 src/sim/        fill model, agent, simulation binary
 bench/          engine and kernel benchmarks
-tools/          itchgen, itchfeed, mlgen, mltrain, ticktotrade, ouchgw
+tools/          itchgen, itchfeed, mlgen, mltrain, ticktotrade, ouchgw,
+                liveshadow
 tests/          seven test binaries, run by ctest
-scripts/        run_bench.sh, run_experiment.sh, run_queue_model.sh, analyse.py,
-                skew_compare.py, compare_runs.py, tape_structure.py
+scripts/        run_bench.sh, run_experiment.sh, run_queue_model.sh,
+                run_determinism.sh, run_fuzz.sh, run_live.sh, live_bridge.py,
+                latency_svg.py, analyse.py, skew_compare.py, compare_runs.py,
+                tape_structure.py
+fuzz/           libFuzzer harnesses and their seed corpora
 experiments/    pre-registration, amendments, results
 results/        everything the three scripts produce
 docs/           a longer write up of the latency result

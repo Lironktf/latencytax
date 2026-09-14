@@ -109,6 +109,19 @@ class Reconstructor {
   // Replays one day. `trades` must be sorted by time_ms.
   ReplayStats run(const std::vector<Snapshot>& snaps, const std::vector<RawTrade>& trades);
 
+  // --- incremental -------------------------------------------------------
+  // The same machinery, fed one event at a time, for the live shadow. run()
+  // is written in terms of these, so the live path and the replay path are the
+  // same code and a difference between them would be a bug in one place rather
+  // than a divergence between two.
+  //
+  // Call push_snapshot first. Then push_trade for everything that happened
+  // since, then push_snapshot again to close the window.
+  void push_snapshot(const Snapshot& s);
+  void push_trade(const RawTrade& t);
+  const ReplayStats& stats() const { return live_; }
+  bool started() const { return started_; }
+
   const std::vector<WindowStats>& per_window() const { return per_window_; }
   void keep_per_window(bool k) { keep_per_window_ = k; }
 
@@ -133,6 +146,12 @@ class Reconstructor {
   std::uint64_t commands_ = 0;
   std::uint64_t taker_seq_ = 0;
   Ts now_ns_ = 0;
+  // Incremental state: the window that is open, and the snapshot that opened it.
+  bool started_ = false;
+  Snapshot open_{};
+  WindowStats win_{};
+  ReplayStats live_{};
+  EventSink* outer_sink_ = nullptr;
 };
 
 }  // namespace ltx
