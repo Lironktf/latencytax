@@ -95,6 +95,9 @@ target_link_libraries(ticktotrade PRIVATE ltx_engine ltx_wire)
 add_executable(ouchgw tools/ouchgw.cpp)
 target_link_libraries(ouchgw PRIVATE ltx_engine ltx_wire)
 
+add_executable(wallets tools/wallets.cpp)
+target_link_libraries(wallets PRIVATE ltx_engine ltx_data)
+
 add_executable(liveshadow tools/liveshadow.cpp)
 target_link_libraries(liveshadow PRIVATE ltx_engine ltx_data)
 

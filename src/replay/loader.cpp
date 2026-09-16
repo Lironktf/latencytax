@@ -172,6 +172,22 @@ bool parse_trade(std::string_view line, int price_decimals, RawTrade& out) {
   return true;
 }
 
+bool parse_trade_users(std::string_view line, TradeUsers& out) {
+  Scan sc{line.data(), line.data() + line.size()};
+  if (!sc.seek_key("users")) return false;
+  if (!sc.eat('[')) return false;
+  std::string_view a, b;
+  if (!sc.str(a)) return false;
+  if (!sc.eat(',')) return false;
+  if (!sc.str(b)) return false;
+  if (a.size() != kAddrLen || b.size() != kAddrLen) return false;
+  std::memcpy(out.buyer, a.data(), kAddrLen);
+  out.buyer[kAddrLen] = '\0';
+  std::memcpy(out.seller, b.data(), kAddrLen);
+  out.seller[kAddrLen] = '\0';
+  return true;
+}
+
 std::vector<Snapshot> load_snapshots(const std::string& root, const std::string& day,
                                      int price_decimals, LoadStats& stats) {
   std::vector<Snapshot> out;

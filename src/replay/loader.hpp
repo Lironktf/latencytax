@@ -77,4 +77,18 @@ std::vector<RawTrade> load_trades(const std::string& root, const std::string& da
 // "1916.3" with decimals=1 -> 19163. Exact; never touches a double.
 bool parse_fixed(std::string_view s, int decimals, std::int64_t& out);
 
+// Hyperliquid names both counterparties on every print. They are not part of
+// RawTrade because that struct sits in the replay's hot path and an address is
+// 42 characters; nothing in the book cares who traded. This pulls them out for
+// the one tool that does.
+//
+// `users` is [buyer, seller], so on a "B" print the aggressor is the first and
+// on an "A" print it is the second.
+inline constexpr std::size_t kAddrLen = 42;   // "0x" and 40 hex digits
+struct TradeUsers {
+  char buyer[kAddrLen + 1];
+  char seller[kAddrLen + 1];
+};
+bool parse_trade_users(std::string_view line, TradeUsers& out);
+
 }  // namespace ltx
