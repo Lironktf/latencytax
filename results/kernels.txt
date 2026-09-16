@@ -1,29 +1,29 @@
 host: 4 cpus, tsc 2.4000 GHz (measured against CLOCK_MONOTONIC)
-timer pair cost: p50 39 cycles (16.3 ns), subtracted from the latency table
+timer pair cost: p50 36 cycles (15.0 ns), subtracted from the latency table
 book arrays: 2 MB pages requested with madvise
 
 ml kernels, AVX2 and FMA available
 
-  dot 64, vector                   6.86 ns/call     18.65 GFLOP/s  (67108864 reps)
-  dot 64, scalar                  50.97 ns/call      2.51 GFLOP/s  (16777216 reps)
-  dot speedup                      7.43x
+  dot 64, vector                   6.31 ns/call     20.29 GFLOP/s  (67108864 reps)
+  dot 64, scalar                  48.24 ns/call      2.65 GFLOP/s  (16777216 reps)
+  dot speedup                      7.65x
 
-  axpy 64, vector                  6.07 ns/call     21.08 GFLOP/s  (67108864 reps)
-  axpy 64, scalar                  5.81 ns/call     22.03 GFLOP/s  (67108864 reps)
-  axpy speedup                     0.96x
+  axpy 64, vector                  5.63 ns/call     22.72 GFLOP/s  (67108864 reps)
+  axpy 64, scalar                  5.71 ns/call     22.43 GFLOP/s  (67108864 reps)
+  axpy speedup                     1.01x
 
-  gemv 32x64, row at a time      230.95 ns/call     17.74 GFLOP/s  (4194304 reps)
-  gemv 32x64, 4 rows blocked     200.81 ns/call     20.40 GFLOP/s  (4194304 reps)
-  gemv 32x64, scalar            1548.19 ns/call      2.65 GFLOP/s  (262144 reps)
-  gemv speedup                     7.71x over scalar,     1.15x from blocking alone
+  gemv 32x64, row at a time      231.70 ns/call     17.68 GFLOP/s  (4194304 reps)
+  gemv 32x64, 4 rows blocked     187.37 ns/call     21.86 GFLOP/s  (4194304 reps)
+  gemv 32x64, scalar            1526.93 ns/call      2.68 GFLOP/s  (262144 reps)
+  gemv speedup                     8.15x over scalar,     1.24x from blocking alone
 
-  adam step 2048, vector        2497.01 ns/call      4.10 GFLOP/s  (262144 reps)
-  adam step 2048, scalar        7286.04 ns/call      1.41 GFLOP/s  (65536 reps)
-  adam speedup                     2.92x
+  adam step 2048, vector        2568.88 ns/call      3.99 GFLOP/s  (262144 reps)
+  adam step 2048, scalar        7730.09 ns/call      1.32 GFLOP/s  (65536 reps)
+  adam speedup                     3.01x
 
-  logistic inference              19.74 ns/call      6.48 GFLOP/s  (67108864 reps)
-  mlp 64-32-1 inference          263.45 ns/call     15.79 GFLOP/s  (4194304 reps)
-  mlp 64-32-1 train step        2046.64 ns/call      6.10 GFLOP/s  (262144 reps)
+  logistic inference              20.35 ns/call      6.29 GFLOP/s  (67108864 reps)
+  mlp 64-32-1 inference          260.17 ns/call     15.99 GFLOP/s  (4194304 reps)
+  mlp 64-32-1 train step        2050.55 ns/call      6.09 GFLOP/s  (262144 reps)
 
   peak for this core: AVX2 fused multiply add, 2 units x 8 lanes x 2 flops x 2.40 GHz = 76.8 GFLOP/s
 

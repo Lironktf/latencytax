@@ -4,7 +4,7 @@ Back to the [README](../README.md). The full account, including what was
 scored against the test set and when, is in
 [experiments/002_queue_model](../experiments/002_queue_model), which also carries
 an addendum fitting the same features as a discrete time hazard: AUC 0.8163 at a
-five second horizon against 0.7001 for the single 30 second classifier, and worse
+five second horizon against 0.6998 for the single 30 second classifier, and worse
 than a constant past a minute.
 
 ## The queue model
@@ -23,7 +23,7 @@ is the one that produces fills:
 > through q?
 
 That is read straight off the tape, with no simulation and no fill model in
-between. 828,828 training samples over the calibration days, 1,035,984 over the
+between. 826,212 training samples over the calibration days, 1,032,744 over the
 holdout.
 
 **Everything is written from scratch.** AVX2 kernels with a scalar reference
@@ -35,17 +35,17 @@ differences. No library is involved at any point.
 |---|---|---|---|
 | the constant the fill model assumes | 0.55763 | 0.18535 | 0.5000 |
 | one feature | 0.53203 | 0.17555 | 0.6754 |
-| **logistic, 64 features** | **0.52132** | **0.17074** | **0.7001** |
-| mlp, 64-32-1 | 0.52761 | 0.17147 | 0.6584 |
+| **logistic, 64 features** | **0.52195** | **0.17097** | **0.6998** |
+| mlp, 64-32-1 | 0.52247 | 0.16981 | 0.6790 |
 
 Three things there are worth stating rather than leaving to be noticed. Most of
 the signal is one ratio: a logistic on `log1p(q / consuming volume over the last
-30 s)` alone gets 0.6754, and the other 63 features are worth 0.0247 of AUC
-between them. Per day AUC on the holdout runs 0.671 to 0.737 with no bad day,
+30 s)` alone gets 0.6754, and the other 63 features are worth 0.0244 of AUC
+between them. Per day AUC on the holdout runs 0.671 to 0.734 with no bad day,
 across days whose base rate moves by a factor of 2.3. And **the neural network
-loses**, on every metric, at every width and learning rate searched; the bucket
-indicators in the feature expansion already give the linear model the one bend
-the problem needs.
+loses** on ranking, 0.6790 against 0.6998, at every width and learning rate
+searched; the bucket indicators in the feature expansion already give the linear
+model the one bend the problem needs.
 
 ### Used for something
 

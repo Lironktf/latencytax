@@ -11,30 +11,31 @@ Every number comes from `scripts/run_queue_model.sh`.
 
 ## 1. Is it predictable?
 
-Test set: 1,035,984 samples over five holdout days, 24.56% positive.
+Test set: 1,032,744 samples over five holdout days, 24.57% positive.
 
 | model | log loss | Brier | AUC |
 |---|---|---|---|
-| base rate | 0.55763 | 0.18535 | 0.5000 |
-| one feature | 0.53203 | 0.17555 | 0.6754 |
-| **logistic, 64 features** | **0.52132** | **0.17074** | **0.7001** |
-| mlp, 64-32-1 | 0.52761 | 0.17147 | 0.6584 |
+| base rate | 0.55771 | 0.18539 | 0.5000 |
+| one feature | 0.53205 | 0.17557 | 0.6754 |
+| **logistic, 64 features** | **0.52195** | **0.17097** | **0.6998** |
+| mlp, 64-32-1 | 0.52247 | 0.16981 | 0.6790 |
 
 H1 holds. Against the constant the fill model currently assumes, which has an
 AUC of 0.5 by construction because it has no per level opinion, a linear model on
-observable state reaches 0.7001.
+observable state reaches 0.6998.
 
 Three things in that table are worth saying out loud rather than leaving for a
 reader to notice.
 
 **Most of it is one ratio.** A logistic regression on the single quantity
 `log1p(q / consuming volume over the last 30 s)` already gets AUC 0.6754. The
-other 63 features are worth 0.0247 of AUC and 0.011 of log loss between them.
+other 63 features are worth 0.0244 of AUC and 0.010 of log loss between them.
 That is a real improvement and it is not a large one.
 
-**The neural network loses.** The MLP is worse than the linear model on every
-metric, on the validation day and on the test set, at every width and learning
-rate searched. The bucket indicators in the feature expansion already give the
+**The neural network loses**, though not on every metric. It is behind the linear
+model on AUC, 0.6790 against 0.6998, and on log loss, and ahead on Brier, 0.16981
+against 0.17097. Ranking is what the simulator uses and ranking is where it
+loses, at every width and learning rate searched. The bucket indicators in the feature expansion already give the
 linear model the one bend the problem needs, and past that there is no structure
 for a hidden layer to find. This is reported as the result rather than buried,
 and it is the reason the model shipped into the simulator is the logistic one.
@@ -43,17 +44,17 @@ and it is the reason the model shipped into the simulator is the logistic one.
 
 | day | samples | positive rate | log loss | AUC |
 |---|---|---|---|---|
-| 2026-08-13 | 207,204 | 0.2923 | 0.56556 | 0.6710 |
-| 2026-08-14 | 207,192 | 0.2811 | 0.54264 | 0.7029 |
-| 2026-08-16 | 207,192 | 0.1272 | 0.43755 | 0.7367 |
-| 2026-08-17 | 207,192 | 0.2705 | 0.53979 | 0.6946 |
-| 2026-08-18 | 207,204 | 0.2570 | 0.52105 | 0.7152 |
+| 2026-08-13 | 206,544 | 0.2926 | 0.56572 | 0.6712 |
+| 2026-08-14 | 206,556 | 0.2812 | 0.54218 | 0.7045 |
+| 2026-08-16 | 206,544 | 0.1274 | 0.44157 | 0.7340 |
+| 2026-08-17 | 206,544 | 0.2701 | 0.53941 | 0.6951 |
+| 2026-08-18 | 206,556 | 0.2571 | 0.52089 | 0.7167 |
 
-AUC runs from 0.671 to 0.737 with no bad day, across days whose base rate moves
+AUC runs from 0.671 to 0.734 with no bad day, across days whose base rate moves
 by a factor of 2.3.
 
 **Calibration needed help and still is not perfect.** The positive rate is 0.2534
-on the fit days, 0.3244 on the validation day and 0.2456 on the test set. A model
+on the fit days, 0.3244 on the validation day and 0.2457 on the test set. A model
 fitted on one regime and applied to another is well ranked but wrongly scaled, so
 a two parameter Platt scaling is fitted on the validation day. Because the
 validation day has a higher base rate than the test period, the scaled model
@@ -71,27 +72,27 @@ draws.
 
 | metric | ungated | gated | difference | 95% CI |
 |---|---|---|---|---|
-| markout 1 s, bps | -0.4208 | -0.2353 | **+0.1854** | **[+0.0726, +0.4356]** |
-| markout 5 s, bps | -0.4937 | -0.3148 | **+0.1789** | **[+0.0502, +0.4467]** |
-| markout 30 s, bps | -0.6507 | -0.5732 | +0.0775 | [-0.1079, +0.4180] |
-| markout 300 s, bps | -0.6867 | -0.3669 | +0.3198 | [-0.4874, +1.7533] |
-| swept share of fills | 0.4397 | 0.2481 | **-0.1916** | **[-0.3530, -0.1072]** |
-| net edge, bps | -2.6412 | -2.4583 | +0.1829 | [-0.1590, +0.5768] |
-| fills | 1,451 | 1,701 | | |
-| net PnL, USD | -215.21 | -175.52 | | |
+| markout 1 s, bps | -0.4208 | -0.2130 | **+0.2078** | **[+0.0716, +0.4542]** |
+| markout 5 s, bps | -0.4937 | -0.2909 | **+0.2028** | **[+0.0425, +0.4809]** |
+| markout 30 s, bps | -0.6507 | -0.5280 | **+0.1227** | **[+0.0014, +0.4356]** |
+| markout 300 s, bps | -0.6867 | -0.5757 | +0.1110 | [-0.6196, +1.9168] |
+| swept share of fills | 0.4397 | 0.2578 | **-0.1819** | **[-0.3383, -0.1054]** |
+| net edge, bps | -2.6412 | -2.5824 | +0.0588 | [-0.1613, +0.3190] |
+| fills | 1,451 | 1,800 | | |
+| net PnL, USD | -215.21 | -194.15 | | |
 
-H2 holds at the horizons where the data has resolution. The share of fills that
-come from the tape trading *through* the agent's price, which is the adversely
-selected subset, falls from 44.0% to 24.8% with an interval that excludes zero.
-Short horizon markout improves by about 0.18 bps at 1 and 5 seconds, also
-excluding zero. The 30 and 300 second intervals cross zero; the 300 second one is
-very wide because few fills have five minutes of day left after them.
+H2 holds. The share of fills that come from the tape trading *through* the
+agent's price, which is the adversely selected subset, falls from 44.0% to 25.8%
+with an interval that excludes zero. Markout improves by about 0.20 bps at 1 and
+5 seconds and 0.12 at 30, all three excluding zero. Only the 300 second interval
+crosses, and it is very wide because few fills have five minutes of day left
+after them.
 
-The model gets these while taking **more** fills, not fewer: 1,701 against 1,451.
+The model gets these while taking **more** fills, not fewer: 1,800 against 1,451.
 It is not simply trading less.
 
-Net edge improves by 0.18 bps with an interval that crosses zero, and remains
-negative at -2.46 bps. The 1.5 bps maker fee is still five times the half spread,
+Net edge improves by 0.06 bps with an interval that crosses zero, and remains
+negative at -2.58 bps. The 1.5 bps maker fee is still five times the half spread,
 and no amount of queue selection fixes that. What the model does is exactly what
 it was asked to do, which is pick better queues, and that is visible in the
 markout rather than in the PnL.
@@ -239,7 +240,7 @@ censored samples are at risk in every bucket, which is what censoring means.
 Three things, two of which are not flattering.
 
 **It is a large win at short horizons.** AUC 0.8163 at five seconds, against the
-0.7001 the single classifier managed at thirty. Whether a queue clears in the
+0.6998 the single classifier managed at thirty. Whether a queue clears in the
 next few seconds is far more predictable than whether it clears eventually, which
 is the same shape experiment 003 found in wallet toxicity: the information is
 short lived. For a maker deciding whether to join a level right now, the five
@@ -247,7 +248,7 @@ second number is the one that matters, and it is the one the original design was
 not asking for.
 
 **It loses to the specialist at the horizon the specialist was trained on.** 0.6678
-against 0.7001 at thirty seconds. A model fitted for one horizon beats a general
+against 0.6998 at thirty seconds. A model fitted for one horizon beats a general
 one there, which is unsurprising and worth stating rather than hiding behind the
 five second row.
 

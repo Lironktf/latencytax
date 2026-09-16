@@ -30,7 +30,7 @@ the raw output is committed under `results/`.
 | tick to trade | 11.1 µs over UDP, of which the engine is 3%; 999 ns with no kernel in the path | [how](docs/latency.md) |
 | order entry recovery | connection killed with 800 acknowledgements outstanding, all 800 replayed byte for byte | [how](docs/wire.md#order-entry) |
 | determinism | one input, six configurations, one event-stream hash per symbol | `scripts/run_determinism.sh` |
-| queue model | AUC 0.700 on 1,035,984 holdout rows against 0.5 for the constant it replaces, and 0.816 at a 5 s horizon once refitted as a hazard | [how](docs/queue-model.md) |
+| queue model | AUC 0.700 on 1,032,744 holdout rows against 0.5 for the constant it replaces, and 0.816 at a 5 s horizon once refitted as a hazard | [how](docs/queue-model.md) |
 | **wallet toxicity** | **+1.4024 bps** between toxic and benign flow, 95% CI [+0.8900, +2.0254], walked forward over 20 days | [how](experiments/003_wallet_toxicity/results.md) |
 | latency tax | −0.001495 bps per ms over 0.1 to 100 ms, 95% CI [−0.004663, +0.000695] | [how](docs/experiment.md) |
 
