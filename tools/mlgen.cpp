@@ -107,7 +107,10 @@ int main(int argc, char** argv) {
   }
   if (days.empty()) { std::fprintf(stderr, "no days found\n"); return 1; }
 
-  const std::int64_t H = static_cast<std::int64_t>(a.horizon_s) * 1000;
+  // The survival horizon is the last bucket edge; the binary label keeps the
+  // 30 second definition experiment 002 used so the two remain comparable.
+  const std::int64_t H = kBucketEdges[kBuckets - 1];
+  const std::int64_t H_BINARY = static_cast<std::int64_t>(a.horizon_s) * 1000;
   const double q_fracs[3] = {0.25, 0.5, 1.0};
   const int offsets[2] = {0, 1};
 
@@ -138,6 +141,8 @@ int main(int argc, char** argv) {
       if (static_cast<int>(si) % a.stride != 0) continue;
       if (s.n_bids < 2 || s.n_asks < 2) continue;
       // A sample needs a full horizon of tape after it.
+      // A sample needs the full survival horizon after it, or its censoring is
+      // an artefact of the day ending rather than of the market.
       if (s.time_ms + H > snaps.back().time_ms) break;
 
       for (int soff = 0; soff < 2; ++soff) {
@@ -149,22 +154,44 @@ int main(int argc, char** argv) {
           if (level_eth <= 0) continue;
 
           // One forward scan of the tape serves every queue fraction at this
-          // level, because the cumulative volume only grows.
-          double consumed = 0.0;
+          // level, because the cumulative volume only grows. The scan now runs
+          // to the last bucket edge and records *when* each fraction was
+          // reached, not just whether it was.
+          double consumed = 0.0, consumed_binary = 0.0;
           bool swept = false;
+          std::int64_t swept_at = -1;
+          std::int64_t reach_ms[3] = {-1, -1, -1};
           for (std::size_t k = ti; k < trades.size(); ++k) {
             const RawTrade& t = trades[k];
             if (t.time_ms > s.time_ms + H) break;
             if (t.aggressor == side) continue;   // same side as the resting order
             if (side == Side::Buy ? (t.tick < lv.tick) : (t.tick > lv.tick)) {
               swept = true;
+              swept_at = t.time_ms - s.time_ms;
               break;
             }
-            if (t.tick == lv.tick) consumed += static_cast<double>(t.qty) / kQtyScale;
+            if (t.tick == lv.tick) {
+              consumed += static_cast<double>(t.qty) / kQtyScale;
+              if (t.time_ms <= s.time_ms + H_BINARY) consumed_binary = consumed;
+              for (int qi = 0; qi < 3; ++qi) {
+                if (reach_ms[qi] < 0 && consumed >= q_fracs[qi] * level_eth) {
+                  reach_ms[qi] = t.time_ms - s.time_ms;
+                }
+              }
+            }
+          }
+          // A print through the level takes everything at it, so anything not
+          // already cleared clears at that moment.
+          if (swept) {
+            for (int qi = 0; qi < 3; ++qi) {
+              if (reach_ms[qi] < 0) reach_ms[qi] = swept_at;
+            }
           }
 
           for (int qi = 0; qi < 3; ++qi) {
             Record r{};
+            r.clear_bucket = reach_ms[qi] < 0 ? kCensored
+                                              : bucket_of(reach_ms[qi]);
             Query qy;
             qy.side = side;
             qy.offset_ticks = offsets[oi];
@@ -178,7 +205,8 @@ int main(int argc, char** argv) {
             }
             r.ts_ms = s.time_ms;
             r.consumed_eth = static_cast<float>(swept ? level_eth * 4.0 : consumed);
-            r.label = (swept || consumed >= qy.q_eth) ? 1 : 0;
+            const bool swept_in_binary = swept && swept_at <= H_BINARY;
+            r.label = (swept_in_binary || consumed_binary >= qy.q_eth) ? 1 : 0;
             r.side = static_cast<std::uint8_t>(soff);
             r.offset = static_cast<std::uint8_t>(offsets[oi]);
             r.day = static_cast<std::uint8_t>(di);

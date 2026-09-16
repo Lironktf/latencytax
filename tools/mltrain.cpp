@@ -46,6 +46,7 @@ struct Args {
   float ftrl_l1 = 0.5f;
   float ftrl_l2 = 1.0f;
   bool quiet = false;
+  bool survival = false;
 };
 
 void usage() {
@@ -63,6 +64,8 @@ void usage() {
       "  --ftrl-alpha=X     default 0.05\n"
       "  --ftrl-l1=X        default 0.5\n"
       "  --ftrl-l2=X        default 1.0\n"
+      "  --survival         fit a discrete time hazard per bucket instead of one\n"
+      "                     classifier, giving P(fill by h) at every horizon\n"
       "  --quiet\n"
       "  --help\n");
 }
@@ -232,6 +235,7 @@ int main(int argc, char** argv) {
     else if (num("--ftrl-l1=", d)) a.ftrl_l1 = static_cast<float>(d);
     else if (num("--ftrl-l2=", d)) a.ftrl_l2 = static_cast<float>(d);
     else if (s == "--quiet") a.quiet = true;
+    else if (s == "--survival") a.survival = true;
     else { std::fprintf(stderr, "unknown argument %s\n", s.c_str()); usage(); return 1; }
   }
 
@@ -297,6 +301,107 @@ int main(int argc, char** argv) {
     for (std::size_t i = 0; i < Y.size(); ++i) out[i] = predict(X.data() + i * kDim);
     return score(out, Y);
   };
+
+  // --- discrete time hazard -------------------------------------------------
+  // One logistic per bucket, each fitted on the samples that survived to it,
+  // which is the standard way to fit a discrete time hazard and lets the whole
+  // thing reuse the FTRL implementation unchanged. The baseline hazard is fully
+  // flexible because each bucket gets its own intercept and its own weights.
+  //
+  //   S(k) = prod_{j <= k} (1 - hazard_j(x))      P(fill by edge k) = 1 - S(k)
+  if (a.survival) {
+    auto buckets_of = [](const std::vector<const Record*>& rs) {
+      std::vector<std::uint8_t> b(rs.size());
+      for (std::size_t i = 0; i < rs.size(); ++i) b[i] = rs[i]->clear_bucket;
+      return b;
+    };
+    const std::vector<std::uint8_t> Bf = buckets_of(fit);
+    const std::vector<std::uint8_t> Bv = buckets_of(val);
+    const std::vector<std::uint8_t> Bt = buckets_of(test_ptr);
+
+    std::printf("discrete time hazard, %zu buckets, edges in seconds:", kBuckets);
+    for (std::size_t k = 0; k < kBuckets; ++k) {
+      std::printf(" %.0f", kBucketEdges[k] / 1000.0);
+    }
+    std::printf("\n");
+    {
+      std::size_t cens = 0;
+      for (std::uint8_t b : Bf) cens += (b == kCensored);
+      std::printf("  censored in the fit set: %zu of %zu (%.1f%%)\n\n", cens, Bf.size(),
+                  100.0 * cens / Bf.size());
+    }
+
+    std::vector<FtrlLogistic> hz;
+    for (std::size_t k = 0; k < kBuckets; ++k) {
+      FtrlLogistic m({a.ftrl_alpha, 1.0f, a.ftrl_l1, a.ftrl_l2}, kDim);
+      std::size_t at_risk = 0, events = 0;
+      for (std::size_t i = 0; i < Bf.size(); ++i) {
+        // At risk means it had not cleared before this bucket. Censored samples
+        // are at risk in every bucket, which is what censoring means.
+        if (Bf[i] != kCensored && Bf[i] < k) continue;
+        ++at_risk;
+        const float y = (Bf[i] == k) ? 1.0f : 0.0f;
+        events += static_cast<std::size_t>(y);
+        const float* x = Xf.data() + i * kDim;
+        m.update(x, m.predict(x), y);
+      }
+      m.finalise();
+      std::printf("  bucket %zu (<= %5.0f s)  at risk %8zu  cleared %8zu  rate %.4f\n", k,
+                  kBucketEdges[k] / 1000.0, at_risk, events,
+                  at_risk ? static_cast<double>(events) / at_risk : 0.0);
+      hz.push_back(std::move(m));
+    }
+
+    // Survival curve per sample, then scored at every horizon.
+    auto curve = [&](const std::vector<float>& X, std::size_t i) {
+      std::vector<float> p(kBuckets);
+      double surv = 1.0;
+      for (std::size_t k = 0; k < kBuckets; ++k) {
+        surv *= (1.0 - hz[k].predict_fixed(X.data() + i * kDim));
+        p[k] = static_cast<float>(1.0 - surv);
+      }
+      return p;
+    };
+
+    // Calibrated on the validation day, one scaler per horizon, exactly as the
+    // classifier in experiment 002 is.
+    std::vector<Platt> cal(kBuckets);
+    for (std::size_t k = 0; k < kBuckets; ++k) {
+      std::vector<float> p(Bv.size());
+      std::vector<std::uint8_t> y(Bv.size());
+      for (std::size_t i = 0; i < Bv.size(); ++i) {
+        p[i] = curve(Xv, i)[k];
+        y[i] = (Bv[i] != kCensored && Bv[i] <= k) ? 1 : 0;
+      }
+      cal[k].fit(p, y);
+    }
+
+    if (have_test) {
+      std::printf("\ntest set, P(the queue clears by each horizon)\n");
+      std::printf("  %-10s %10s %10s %10s %10s %10s\n", "horizon", "actual", "predicted",
+                  "logloss", "base", "auc");
+      for (std::size_t k = 0; k < kBuckets; ++k) {
+        std::vector<float> p(Bt.size());
+        std::vector<std::uint8_t> y(Bt.size());
+        for (std::size_t i = 0; i < Bt.size(); ++i) {
+          p[i] = cal[k].apply(curve(Xt, i)[k]);
+          y[i] = (Bt[i] != kCensored && Bt[i] <= k) ? 1 : 0;
+        }
+        const Metrics m = score(p, y);
+        double mp = 0;
+        for (float v : p) mp += v;
+        mp /= p.size();
+        char lab[16];
+        std::snprintf(lab, sizeof(lab), "%.0f s", kBucketEdges[k] / 1000.0);
+        std::printf("  %-10s %10.4f %10.4f %10.5f %10.5f %10.4f\n", lab, m.base, mp,
+                    m.log_loss, constant_metrics(m.base, y).log_loss, m.auc);
+      }
+      std::printf("\n  the 30 s row is the same question experiment 002 asked with a single\n");
+      std::printf("  classifier. the other five rows are what the hazard adds: the same\n");
+      std::printf("  model answers every horizon rather than the one it was trained on.\n");
+    }
+    return 0;
+  }
 
   const double val_rate = Yv.empty() ? 0.0 : constant_metrics(0.5, Yv).base;
   const double test_rate = Yt.empty() ? 0.0 : constant_metrics(0.5, Yt).base;

@@ -16,7 +16,28 @@
 
 namespace ltx::ml {
 
-inline constexpr char kMagic[8] = {'L', 'T', 'X', 'Q', 'M', '0', '0', '1'};
+inline constexpr char kMagic[8] = {'L', 'T', 'X', 'Q', 'M', '0', '0', '2'};
+
+// Time to clear, bucketed. Experiment 002 asked one question, does the queue in
+// front of an order trade away within 30 seconds, and answered it with a
+// classifier. That throws away most of what a market maker wants: not whether
+// the queue clears by an arbitrary horizon but roughly when, so it can compare
+// joining this level against joining another. These buckets turn the same
+// observation into a discrete time survival problem, with one hazard fitted per
+// bucket on the samples that survived to it.
+//
+// Edges in milliseconds; kCensored means it had not cleared by the last edge.
+inline constexpr std::size_t kBuckets = 6;
+inline constexpr std::int64_t kBucketEdges[kBuckets] = {5000, 15000, 30000, 60000,
+                                                        150000, 300000};
+inline constexpr std::uint8_t kCensored = 255;
+
+inline std::uint8_t bucket_of(std::int64_t dt_ms) {
+  for (std::size_t i = 0; i < kBuckets; ++i) {
+    if (dt_ms <= kBucketEdges[i]) return static_cast<std::uint8_t>(i);
+  }
+  return kCensored;
+}
 
 struct DatasetHeader {
   char magic[8];
@@ -31,12 +52,14 @@ struct Record {
   float base[kBaseFeatures];   // 128 bytes
   std::int64_t ts_ms;
   float consumed_eth;          // volume that actually traded at the price, capped
-  std::uint8_t label;
+  std::uint8_t label;          // cleared within 30 s, the experiment 002 target
   std::uint8_t side;           // 0 buy, 1 sell
   std::uint8_t offset;
   std::uint8_t day;
+  std::uint8_t clear_bucket;   // which bucket it cleared in, or kCensored
+  std::uint8_t pad[7];
 };
-static_assert(sizeof(Record) == 144, "record should stay at 144 bytes");
+static_assert(sizeof(Record) == 152, "record should stay at 152 bytes");
 
 inline bool write_dataset(const std::string& path, const std::vector<Record>& rows,
                           std::uint32_t horizon_ms, std::uint32_t days) {

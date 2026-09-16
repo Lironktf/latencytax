@@ -202,3 +202,69 @@ and is nowhere near a hot path. Worth knowing, not worth doing.
   the first snapshot at or after one second, which can be up to five seconds
   away, exactly as in 001.
 - **This is still a backtest.** Nothing here places an order anywhere.
+
+---
+
+## Addendum, 2026-09-16: a hazard model instead of one classifier
+
+Everything above answers one question: does the queue in front of an order trade
+away **within 30 seconds**. That horizon was chosen and then everything was fitted
+to it, which throws away most of what a market maker actually wants. The useful
+question is not whether the queue clears by some arbitrary horizon but roughly
+*when*, so two levels can be compared.
+
+So: the same features, the same FTRL implementation, refitted as a discrete time
+hazard. Six buckets with edges at 5, 15, 30, 60, 150 and 300 seconds, one
+logistic per bucket trained on the samples that survived to it, and the survival
+curve multiplied out:
+
+    S(k) = prod_{j <= k} (1 - hazard_j(x))      P(clears by edge k) = 1 - S(k)
+
+The baseline hazard is fully flexible because every bucket gets its own weights.
+31.6% of the fit set is censored, meaning it had not cleared by 300 seconds, and
+censored samples are at risk in every bucket, which is what censoring means.
+
+    ./build/mltrain --survival --train=results/queue_train.bin \
+                    --test=results/queue_test.bin
+
+| horizon | actual | predicted | log loss | base rate log loss | AUC |
+|---|---|---|---|---|---|
+| 5 s | 0.0354 | 0.0495 | **0.12886** | 0.15304 | **0.8163** |
+| 15 s | 0.1226 | 0.1667 | **0.33379** | 0.37206 | **0.7447** |
+| 30 s | 0.2457 | 0.3399 | **0.54220** | 0.55755 | 0.6678 |
+| 60 s | 0.3891 | 0.5141 | 0.68330 | 0.66837 | 0.5985 |
+| 150 s | 0.5652 | 0.6829 | 0.70381 | 0.68462 | 0.5819 |
+| 300 s | 0.6751 | 0.7684 | 0.64672 | 0.63054 | 0.5683 |
+
+Three things, two of which are not flattering.
+
+**It is a large win at short horizons.** AUC 0.8163 at five seconds, against the
+0.7001 the single classifier managed at thirty. Whether a queue clears in the
+next few seconds is far more predictable than whether it clears eventually, which
+is the same shape experiment 003 found in wallet toxicity: the information is
+short lived. For a maker deciding whether to join a level right now, the five
+second number is the one that matters, and it is the one the original design was
+not asking for.
+
+**It loses to the specialist at the horizon the specialist was trained on.** 0.6678
+against 0.7001 at thirty seconds. A model fitted for one horizon beats a general
+one there, which is unsurprising and worth stating rather than hiding behind the
+five second row.
+
+**Past sixty seconds it is worse than useless.** AUC falls to 0.57 and the log
+loss is *above* the base rate's at 60, 150 and 300 seconds, meaning a constant
+would have scored better. Part of that is calibration: the Platt scaling is
+fitted on the validation day, whose base rate is higher than the test period's,
+so every horizon over-predicts, and over-predicting 0.77 against an actual 0.68
+is expensive in log loss even when the ranking is sound. But the ranking is not
+sound either at those horizons, and AUC does not care about calibration. The
+honest reading is that queue clearing beyond a minute is not predictable from
+this feature set, and the hazard model makes that visible where a single 30
+second classifier hid it inside one averaged number.
+
+**What this changes.** The gate in the simulator still uses the 30 second
+classifier, because that is what was measured end to end in section 2 above and
+swapping it would invalidate those numbers. The hazard model is the better
+instrument for the decision a maker actually faces, and wiring it in, with the
+five second horizon rather than the thirty, is the obvious next step and would
+need its own holdout run to claim anything.

@@ -2,7 +2,10 @@
 
 Back to the [README](../README.md). The full account, including what was
 scored against the test set and when, is in
-[experiments/002_queue_model](../experiments/002_queue_model).
+[experiments/002_queue_model](../experiments/002_queue_model), which also carries
+an addendum fitting the same features as a discrete time hazard: AUC 0.8163 at a
+five second horizon against 0.7001 for the single 30 second classifier, and worse
+than a constant past a minute.
 
 ## The queue model
 
