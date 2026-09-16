@@ -195,7 +195,11 @@ project where nothing went wrong is a project that was not measured.
   effect below 33 ms; it cannot rule out a quote side one.
 - **Queue position inside a level is not observable in an L2 feed.** The fill
   model is a model, and its two least defensible choices are reported as
-  sensitivities rather than buried.
+  sensitivities rather than buried. I went looking for L3 data to settle the
+  cancellation half of it and
+  [could not](docs/kappa-validation-attempt.md): the only per-order feed in the
+  archive has one order per price level 95.7% of the time and ten accounts in the
+  whole book, so there are no queues in it to measure.
 - **The OUCH layouts are OUCH shaped, not certified OUCH.** The ITCH lengths match
   the published sizes. For OUCH I did not have the specification to certify every
   offset, so the message set and semantics follow 4.2 while the layouts are
@@ -236,8 +240,10 @@ docs/           the long form pages linked from this one
 | [queue-model.md](docs/queue-model.md) | the learned queue model and the AVX2 kernels |
 | [experiment.md](docs/experiment.md) | the latency experiment |
 | [data.md](docs/data.md) | the datasets and what they cannot tell you |
+| [kappa-validation-attempt.md](docs/kappa-validation-attempt.md) | trying to settle the fill model's one assumption with L3 data, and failing |
 | [block-interval-latency.md](docs/block-interval-latency.md) | the long form write up of the latency result |
 | [experiments/001_latency_tax](experiments/001_latency_tax) | pre-registration, two amendments, results |
 | [experiments/002_queue_model](experiments/002_queue_model) | design, the audit trail, results |
+| [experiments/003_wallet_toxicity](experiments/003_wallet_toxicity) | pre-registration and results for the counterparty work |
 
 MIT licensed.
